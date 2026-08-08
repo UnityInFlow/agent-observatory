@@ -52,6 +52,8 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
         variant: String,
         toolCalls: Int,
         durationMs: Long,
+        provider: String = "github",
+        model: String = "gpt-x",
     ): String {
         val body = mockMvc.perform(
             post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
@@ -60,7 +62,7 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
                   "experimentId": "$experiment",
                   "benchmarkId": "$benchmarkId",
                   "variant": "$variant",
-                  "runtime": { "provider": "github", "product": "copilot-cli", "version": "0.0.1", "model": "gpt-x" },
+                  "runtime": { "provider": "$provider", "product": "cli", "version": "0.0.1", "model": "$model" },
                   "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
                   "customization": { "instructionsHash": "sha256:deadbeef" },
                   "behavior": { "modelCalls": 6, "toolCalls": $toolCalls, "toolFailures": 1, "retries": 2 },
@@ -186,6 +188,31 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
             .andExpect(jsonPath("$.totalRuns").value(1))
             .andExpect(jsonPath("$.variants[0].passRate").value(1.0))
             .andExpect(jsonPath("$.variants[0].medianToolCalls").value(13.0))
+    }
+
+    @Test
+    fun `compares two runtimes on the same benchmark across separate experiments`() {
+        registerBenchmark("BE-FLOW-8")
+        // A Copilot baseline and a Claude baseline are naturally recorded as separate
+        // experiments, not as variants of one — grouping by variant cannot compare them.
+        evaluate(createRun("BE-FLOW-8", "EXP-COPILOT", "baseline", 13, 40_000), passed = true)
+        evaluate(createRun("BE-FLOW-8", "EXP-COPILOT", "baseline", 17, 42_000), passed = true)
+        evaluate(
+            createRun("BE-FLOW-8", "EXP-CLAUDE", "baseline", 11, 86_000, provider = "anthropic", model = "haiku"),
+            passed = true,
+        )
+
+        mockMvc.perform(get("/api/benchmarks/BE-FLOW-8/comparison?groupBy=runtime"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalRuns").value(3))
+            .andExpect(jsonPath("$.variants.length()").value(2))
+            .andExpect(jsonPath("$.variants[0].variant").value("anthropic/haiku"))
+            .andExpect(jsonPath("$.variants[0].runs").value(1))
+            .andExpect(jsonPath("$.variants[1].variant").value("github/gpt-x"))
+            .andExpect(jsonPath("$.variants[1].runs").value(2))
+            .andExpect(jsonPath("$.variants[1].medianToolCalls").value(15.0))
+            // §20: neither arm reaches the 5-run minimum, and the API must say so.
+            .andExpect(jsonPath("$.warning").isNotEmpty)
     }
 
     @Test

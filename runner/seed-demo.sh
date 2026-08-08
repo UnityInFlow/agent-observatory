@@ -9,8 +9,11 @@
 set -uo pipefail
 
 API="${API:-http://localhost:8080}"
-EXPERIMENT="${EXPERIMENT:-EXP-001}"
-BENCHMARK="${BENCHMARK:-BE-001}"
+EXPERIMENT="${EXPERIMENT:-EXP-DEMO}"
+# Seeded under a DEMO id, never the real benchmark. These are synthetic teaching numbers;
+# recording them against BE-001 would silently mix fiction into every benchmark-level
+# analysis of real runs — which is exactly how a measurement tool starts lying.
+BENCHMARK="${BENCHMARK:-DEMO-001}"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 
@@ -35,7 +38,7 @@ echo "==> registering benchmark ${BENCHMARK}"
 curl -fsS -X POST "${API}/api/benchmarks" -H 'Content-Type: application/json' -d "$(jq -nc \
   --arg id "$BENCHMARK" '{
     id: $id,
-    name: "customer-id-validation",
+    name: "DEMO — synthetic teaching data (not a measurement)",
     category: "bugfix",
     repository: "sample-service",
     prompt: "When POST /customers receives an empty or blank customerId, return HTTP 400.",

@@ -266,10 +266,16 @@ fi
 BEHAVIOR='{}'
 EFFICIENCY_EXTRA='{}'
 TRACE_ID=""
-if [[ "$RUNTIME" == "copilot" ]]; then
+if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
   echo
-  echo "==> reading telemetry back from Tempo"
-  TELEMETRY="$(TEMPO_URL="$TEMPO_URL" "$HERE/lib/copilot-telemetry.sh" "$RUN_ID" || echo null)"
+  if [[ "$RUNTIME" == "copilot" ]]; then
+    echo "==> reading telemetry back from Tempo"
+    TELEMETRY="$(TEMPO_URL="$TEMPO_URL" "$HERE/lib/copilot-telemetry.sh" "$RUN_ID" || echo null)"
+  else
+    # Claude reports events, not spans — a different source, the same internal model.
+    echo "==> reading telemetry back from the collector's event log"
+    TELEMETRY="$("$HERE/lib/claude-telemetry.sh" "$RUN_ID" || echo null)"
+  fi
   if [[ -n "$TELEMETRY" && "$TELEMETRY" != "null" ]]; then
     BEHAVIOR="$(jq -c '.behavior' <<<"$TELEMETRY")"
     EFFICIENCY_EXTRA="$(jq -c '.efficiency' <<<"$TELEMETRY")"

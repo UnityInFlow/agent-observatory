@@ -26,6 +26,27 @@ class ComparisonService(
     /** §20: minimum learning sample is 5 runs per variant; 10 is a better first comparison. */
     private val minimumRunsPerVariant = 5
 
+    /**
+     * What the runs are grouped by. §20 describes two different experiments: varying the
+     * customization (experiments 2–3) and varying the runtime/harness (experiment 5).
+     * Grouping only by variant can express the first but not the second.
+     */
+    enum class GroupBy { VARIANT, RUNTIME }
+
+    /**
+     * Compare every run of one benchmark, across experiments — the only way to put two
+     * runtimes side by side, since a Copilot baseline and a Claude baseline are naturally
+     * recorded as separate experiments rather than as variants of one.
+     *
+     * Grouping by runtime measures the whole harness + model combination, never "the
+     * model" alone (§20).
+     */
+    fun compareBenchmark(benchmarkId: String, groupBy: GroupBy): ComparisonResponse {
+        val benchmarkRuns = runs.search(benchmarkId, null, null)
+        if (benchmarkRuns.isEmpty()) throw NotFoundException("No runs recorded for benchmark '$benchmarkId'")
+        return summarizeAll(experiment = null, runsToCompare = benchmarkRuns, groupBy = groupBy)
+    }
+
     fun compare(experimentRef: String): ComparisonResponse {
         val experiment = runCatching { UUID.fromString(experimentRef) }
             .getOrNull()
@@ -33,26 +54,39 @@ class ComparisonService(
             ?: experiments.findByName(experimentRef)
             ?: throw NotFoundException("Unknown experiment '$experimentRef'")
 
-        val experimentRuns = runs.findByExperimentId(experiment.id)
+        return summarizeAll(experiment, runs.findByExperimentId(experiment.id), GroupBy.VARIANT)
+    }
+
+    private fun summarizeAll(
+        experiment: com.unityinflow.observatory.domain.Experiment?,
+        runsToCompare: List<AgentRun>,
+        groupBy: GroupBy,
+    ): ComparisonResponse {
         val evaluationsByRun = evaluations
-            .findByRunIdIn(experimentRuns.map { it.id })
+            .findByRunIdIn(runsToCompare.map { it.id })
             .associateBy { it.runId }
 
-        val variants = experimentRuns
-            .groupBy { it.variant }
-            .map { (variant, variantRuns) -> summarize(variant, variantRuns, evaluationsByRun) }
+        val key: (AgentRun) -> String = when (groupBy) {
+            GroupBy.VARIANT -> { run -> run.variant }
+            GroupBy.RUNTIME -> { run -> "${run.runtime.provider}/${run.runtime.model ?: "unknown"}" }
+        }
+
+        val groups = runsToCompare
+            .groupBy(key)
+            .map { (label, groupRuns) -> summarize(label, groupRuns, evaluationsByRun) }
             .sortedBy { it.variant }
 
-        val thin = variants.filter { it.runs < minimumRunsPerVariant }.map { it.variant }
+        val thin = groups.filter { it.runs < minimumRunsPerVariant }.map { it.variant }
         val warning = if (thin.isEmpty()) null else
-            "Variant(s) ${thin.joinToString(", ")} have fewer than $minimumRunsPerVariant runs. " +
-                "Agent runs are non-deterministic — one successful run proves very little."
+            "${thin.joinToString(", ")} ${if (thin.size == 1) "has" else "have"} fewer than " +
+                "$minimumRunsPerVariant runs. Agent runs are non-deterministic — " +
+                "one successful run proves very little."
 
         return ComparisonResponse(
-            experimentId = experiment.id,
-            experimentKey = experiment.name,
-            totalRuns = experimentRuns.size,
-            variants = variants,
+            experimentId = experiment?.id,
+            experimentKey = experiment?.name,
+            totalRuns = runsToCompare.size,
+            variants = groups,
             warning = warning,
         )
     }
