@@ -39,6 +39,8 @@ export interface Evaluation {
   exitCode: number;
   passed: boolean;
   failureClass: string | null;
+  /** F13/F15 — harness or environment, not the agent. Derived server-side (#19). */
+  infrastructureFailure: boolean;
   buildPassed: boolean;
   testsPassed: boolean;
   acceptanceCriteriaPassed: number;
@@ -90,8 +92,9 @@ export interface VariantComparison {
   /** F13/F15 runs discarded as harness or environment failures — reported, never averaged. */
   infrastructureFailures: number;
   passed: number;
-  passRate: number;
-  acceptanceRate: number;
+  /** Null when the arm measured nothing at all — render as em dash, never as 0%. */
+  passRate: number | null;
+  acceptanceRate: number | null;
   medianToolCalls: number | null;
   medianModelCalls: number | null;
   medianTokens: number | null;

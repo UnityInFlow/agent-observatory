@@ -292,6 +292,7 @@ class RunService(
                     exitCode = it.exitCode,
                     passed = it.passed,
                     failureClass = it.failureClass,
+                    infrastructureFailure = it.isInfrastructureFailure(),
                     buildPassed = it.buildPassed,
                     testsPassed = it.testsPassed,
                     acceptanceCriteriaPassed = it.acceptanceCriteriaPassed,

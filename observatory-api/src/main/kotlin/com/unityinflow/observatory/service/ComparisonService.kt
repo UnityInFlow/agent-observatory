@@ -113,8 +113,11 @@ class ComparisonService(
             runs = measured.size,
             infrastructureFailures = infrastructure.size,
             passed = passed,
-            passRate = if (evaluated.isEmpty()) 0.0 else passed.toDouble() / evaluated.size,
-            acceptanceRate = if (evaluated.isEmpty()) 0.0 else evaluated.map { it.acceptanceRate() }.average(),
+            // Null, not 0.0: an arm whose every run was discarded measured *nothing*, and
+            // a zero would render as the worst possible result and hand the win to the
+            // other arm — the same one-directional bias this change exists to remove.
+            passRate = if (evaluated.isEmpty()) null else passed.toDouble() / evaluated.size,
+            acceptanceRate = if (evaluated.isEmpty()) null else evaluated.map { it.acceptanceRate() }.average(),
             medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
             medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
             medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
