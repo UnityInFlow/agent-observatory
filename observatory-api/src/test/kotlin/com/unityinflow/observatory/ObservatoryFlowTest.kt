@@ -1,0 +1,208 @@
+package com.unityinflow.observatory
+
+import com.jayway.jsonpath.JsonPath
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+
+/**
+ * Exercises the whole M4–M6 contract the runner depends on:
+ * register benchmark → record run → record evaluation → human review → compare.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+// Spring Boot disables metrics export in tests by default; §15 needs a real scrape.
+@AutoConfigureMetrics
+class ObservatoryFlowTest : AbstractIntegrationTest() {
+
+    @Autowired
+    lateinit var mockMvc: MockMvc
+
+    private fun registerBenchmark(id: String) {
+        mockMvc.perform(
+            post("/api/benchmarks").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "id": "$id",
+                  "name": "customer-id-validation",
+                  "category": "bugfix",
+                  "repository": "sample-service",
+                  "prompt": "Reject blank customerId with HTTP 400.",
+                  "evaluatorVersion": "1.0.0",
+                  "baselineCommit": "abc123"
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated)
+    }
+
+    private fun createRun(
+        benchmarkId: String,
+        experiment: String,
+        variant: String,
+        toolCalls: Int,
+        durationMs: Long,
+    ): String {
+        val body = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "$experiment",
+                  "benchmarkId": "$benchmarkId",
+                  "variant": "$variant",
+                  "runtime": { "provider": "github", "product": "copilot-cli", "version": "0.0.1", "model": "gpt-x" },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "customization": { "instructionsHash": "sha256:deadbeef" },
+                  "behavior": { "modelCalls": 6, "toolCalls": $toolCalls, "toolFailures": 1, "retries": 2 },
+                  "efficiency": { "durationMs": $durationMs, "inputTokens": 20000, "outputTokens": 8000 },
+                  "result": { "changedFiles": ["a/Customer.kt"], "addedLines": 12, "deletedLines": 3 }
+                }
+                """.trimIndent(),
+            ),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.runId").exists())
+            .andReturn().response.contentAsString
+
+        return JsonPath.read(body, "$.runId")
+    }
+
+    private fun evaluate(runId: String, passed: Boolean) {
+        val exit = if (passed) 0 else 12
+        mockMvc.perform(
+            post("/api/runs/$runId/evaluation").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "evaluatorVersion": "1.0.0",
+                  "exitCode": $exit,
+                  "failureClass": ${if (passed) "null" else "\"F03\""},
+                  "correctness": {
+                    "buildPassed": true,
+                    "testsPassed": true,
+                    "acceptanceSuitePassed": $passed,
+                    "acceptanceCriteriaPassed": ${if (passed) 6 else 4},
+                    "acceptanceCriteriaTotal": 6
+                  },
+                  "quality": { "unrelatedFilesChanged": 0, "newDependencies": 0, "staticAnalysisPassed": true },
+                  "safety": { "forbiddenActionAttempts": 0, "secretExposureDetected": false }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `records a run, its evaluation and a human review, then exposes them on the detail endpoint`() {
+        registerBenchmark("BE-FLOW-1")
+        val runId = createRun("BE-FLOW-1", "EXP-FLOW-1", "baseline", toolCalls = 23, durationMs = 182_000)
+        evaluate(runId, passed = true)
+
+        mockMvc.perform(
+            post("/api/runs/$runId/human-review").contentType(MediaType.APPLICATION_JSON).content(
+                """{"reviewer":"jiri","correctness":5,"scopeDiscipline":4,"maintainability":4,"testQuality":3}""",
+            ),
+        ).andExpect(status().isOk)
+
+        mockMvc.perform(get("/api/runs/$runId"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.benchmarkId").value("BE-FLOW-1"))
+            .andExpect(jsonPath("$.experimentKey").value("EXP-FLOW-1"))
+            .andExpect(jsonPath("$.evaluation.passed").value(true))
+            .andExpect(jsonPath("$.evaluation.acceptanceRate").value(1.0))
+            // §12: customization hashes make a variant reproducible, not just labelled.
+            .andExpect(jsonPath("$.customization.instructionsHash").value("sha256:deadbeef"))
+            // Guard against getter-shaped Kotlin helpers leaking into the wire contract.
+            .andExpect(jsonPath("$.customization.isEmpty").doesNotExist())
+            .andExpect(jsonPath("$.customization.empty").doesNotExist())
+            // §17: the UI deep-links to Tempo rather than rebuilding a trace viewer.
+            .andExpect(jsonPath("$.traceUrl").exists())
+            .andExpect(jsonPath("$.humanReviews[0].reviewer").value("jiri"))
+    }
+
+    @Test
+    fun `re-running the evaluator overwrites the verdict instead of duplicating it`() {
+        registerBenchmark("BE-FLOW-2")
+        val runId = createRun("BE-FLOW-2", "EXP-FLOW-2", "baseline", toolCalls = 10, durationMs = 1000)
+
+        evaluate(runId, passed = false)
+        evaluate(runId, passed = true)
+
+        mockMvc.perform(get("/api/runs/$runId"))
+            .andExpect(jsonPath("$.evaluation.passed").value(true))
+            .andExpect(jsonPath("$.evaluation.failureClass").doesNotExist())
+    }
+
+    @Test
+    fun `rejects a run for an unregistered benchmark`() {
+        mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "benchmarkId": "BE-DOES-NOT-EXIST",
+                  "variant": "baseline",
+                  "runtime": { "provider": "github", "product": "copilot-cli" }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `rejects a run with no runtime provider`() {
+        registerBenchmark("BE-FLOW-3")
+        mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """{"benchmarkId":"BE-FLOW-3","variant":"baseline","runtime":{"provider":"","product":"copilot-cli"}}""",
+            ),
+        ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `compares variants and warns when the sample is too small to conclude anything`() {
+        registerBenchmark("BE-FLOW-4")
+        // baseline: 2 runs, 1 pass — deliberately below the 5-run minimum of §20.
+        evaluate(createRun("BE-FLOW-4", "EXP-CMP", "baseline", 23, 180_000), passed = true)
+        evaluate(createRun("BE-FLOW-4", "EXP-CMP", "baseline", 27, 200_000), passed = false)
+        // instructions variant: 2 runs, both pass, fewer tool calls
+        evaluate(createRun("BE-FLOW-4", "EXP-CMP", "instructions", 14, 150_000), passed = true)
+        evaluate(createRun("BE-FLOW-4", "EXP-CMP", "instructions", 16, 140_000), passed = true)
+
+        mockMvc.perform(get("/api/experiments/EXP-CMP/comparison"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalRuns").value(4))
+            .andExpect(jsonPath("$.variants.length()").value(2))
+            .andExpect(jsonPath("$.variants[0].variant").value("baseline"))
+            .andExpect(jsonPath("$.variants[0].passRate").value(0.5))
+            .andExpect(jsonPath("$.variants[0].medianToolCalls").value(25.0))
+            .andExpect(jsonPath("$.variants[0].failureClasses.F03").value(1))
+            .andExpect(jsonPath("$.variants[1].variant").value("instructions"))
+            .andExpect(jsonPath("$.variants[1].passRate").value(1.0))
+            .andExpect(jsonPath("$.variants[1].medianToolCalls").value(15.0))
+            .andExpect(jsonPath("$.warning").isNotEmpty)
+    }
+
+    @Test
+    fun `publishes only low-cardinality dimensions to prometheus`() {
+        registerBenchmark("BE-FLOW-5")
+        val runId = createRun("BE-FLOW-5", "EXP-METRICS", "baseline", 12, 90_000)
+        evaluate(runId, passed = true)
+
+        val scrape = mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+
+        assert(scrape.contains("observatory_runs_total")) { "expected observatory_runs_total in scrape" }
+        assert(scrape.contains("""benchmark_category="bugfix"""")) { "expected benchmark_category label" }
+        // §15: these must never become Prometheus labels.
+        assert(!scrape.contains(runId)) { "run id leaked into Prometheus labels" }
+        assert(!scrape.contains("commit_sha")) { "commit sha leaked into Prometheus labels" }
+    }
+}

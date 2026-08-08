@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: observatory-api
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/observatory}
+    username: ${SPRING_DATASOURCE_USERNAME:observatory}
+    password: ${SPRING_DATASOURCE_PASSWORD:observatory}
+  jpa:
+    hibernate:
+      # Flyway owns the schema; Hibernate only verifies that the mapping agrees with it.
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+observatory:
+  grafana:
+    base-url: ${OBSERVATORY_GRAFANA_BASE_URL:http://localhost:3000}
+    tempo-datasource-uid: ${OBSERVATORY_TEMPO_DATASOURCE_UID:tempo}
+  # Origins allowed to call the API directly (the Vite dev server); in compose the web
+  # container proxies /api on the same origin and this is not used.
+  cors-allowed-origins: ${OBSERVATORY_CORS_ORIGINS:http://localhost:5173,http://localhost:4173}
+
+logging:
+  level:
+    org.flywaydb: INFO
