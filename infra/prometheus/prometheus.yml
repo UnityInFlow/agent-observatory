@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Agent runtime telemetry (Copilot / Claude Code / Codex) forwarded by the collector.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Observatory's own aggregated experiment metrics — deliberately low cardinality.
+  - job_name: observatory-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["observatory-api:8080"]

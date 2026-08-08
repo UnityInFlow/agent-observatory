@@ -1,0 +1,146 @@
+{
+  "uid": "agent-observatory-overview",
+  "title": "Agent Observatory — Overview",
+  "tags": ["agent-observatory"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "runtime",
+        "label": "Runtime",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(observatory_runs_total, runtime)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "variant",
+        "label": "Variant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(observatory_runs_total, variant)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "barchart",
+      "title": "1 — Runs by runtime",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (runtime) (observatory_runs_total{runtime=~\"$runtime\", variant=~\"$variant\"})",
+          "legendFormat": "{{runtime}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "piechart",
+      "title": "2 — Pass / fail",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (observatory_runs_total{runtime=~\"$runtime\", variant=~\"$variant\"})",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "3 — Median run duration",
+      "description": "Wall-clock duration of the whole benchmark run, per variant.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "observatory_run_duration{quantile=\"0.5\", runtime=~\"$runtime\", variant=~\"$variant\"}",
+          "legendFormat": "{{runtime}} / {{variant}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "4 — Median token count",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "observatory_run_tokens{quantile=\"0.5\", runtime=~\"$runtime\", variant=~\"$variant\"}",
+          "legendFormat": "{{runtime}} / {{variant}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "5 — Median tool calls",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "observatory_run_tool_calls{quantile=\"0.5\", runtime=~\"$runtime\", variant=~\"$variant\"}",
+          "legendFormat": "{{runtime}} / {{variant}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "6 — Tool failure rate",
+      "description": "Failed tool executions divided by all tool executions.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.1 },
+              { "color": "red", "value": 0.25 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(observatory_tool_failures_total{runtime=~\"$runtime\"}) / clamp_min(sum(observatory_run_tool_calls_sum{runtime=~\"$runtime\"}), 1)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "text",
+      "title": "7 — Find an individual run trace",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 16 },
+      "options": {
+        "mode": "markdown",
+        "content": "Individual runs are inspected in **Tempo**, not rebuilt here (chapter 00 §19).\n\nOpen **Explore → Tempo → Search** and filter by the resource attribute the runner sets:\n\n```\n{ resource.observatory.run.id = \"<run id>\" }\n```\n\nUseful follow-ups:\n\n```\n{ resource.benchmark.id = \"BE-001\" }\n{ resource.experiment.variant = \"baseline\" }\n{ name = \"execute_tool\" && status = error }\n```\n\nThe Observatory UI links straight here from each run detail page."
+      }
+    }
+  ]
+}

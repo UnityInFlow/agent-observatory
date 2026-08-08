@@ -1,0 +1,74 @@
+# Vendor-neutral ingest point for Copilot CLI, Claude Code and Codex telemetry.
+#
+# Privacy note (chapter 00 section 5): this collector is metadata-only. The attribute
+# processor below deletes prompt/response/tool bodies even if a runtime is misconfigured
+# and sends them, so a single wrong env var on a laptop cannot exfiltrate source code.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+  # Defence in depth: drop content-bearing attributes regardless of client config.
+  attributes/scrub:
+    actions:
+      - key: gen_ai.prompt
+        action: delete
+      - key: gen_ai.completion
+        action: delete
+      - key: gen_ai.input.messages
+        action: delete
+      - key: gen_ai.output.messages
+        action: delete
+      - key: gen_ai.system_instructions
+        action: delete
+      - key: user.email
+        action: delete
+      - key: tool.arguments
+        action: delete
+      - key: tool.result
+        action: delete
+      - key: code.content
+        action: delete
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Promote only low-cardinality dimensions to labels (section 15).
+    resource_to_telemetry_conversion:
+      enabled: false
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/scrub, batch]
+      exporters: [otlp/tempo, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/scrub, batch]
+      exporters: [prometheus, debug]
+
+    logs:
+      receivers: [otlp]
+      processors: [attributes/scrub, batch]
+      exporters: [debug]
+
+  telemetry:
+    logs:
+      level: info
