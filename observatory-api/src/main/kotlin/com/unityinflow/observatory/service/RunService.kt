@@ -12,6 +12,7 @@ import com.unityinflow.observatory.api.RepositoryDto
 import com.unityinflow.observatory.api.ResultDto
 import com.unityinflow.observatory.api.RunResponse
 import com.unityinflow.observatory.api.RuntimeDto
+import com.unityinflow.observatory.api.UpdateTelemetryRequest
 import com.unityinflow.observatory.config.ObservatoryProperties
 import com.unityinflow.observatory.domain.AgentRun
 import com.unityinflow.observatory.domain.AgentRunRepository
@@ -154,6 +155,57 @@ class RunService(
         metrics.recordRun(run, evaluation, category)
 
         return toResponse(run)
+    }
+
+    /**
+     * Backfill telemetry for an already-recorded run. Needed because a run whose trace
+     * was unavailable at record time otherwise contributes zeros to every aggregate, and
+     * a missing measurement averaged as zero biases the agent to look cheaper than it was.
+     */
+    fun updateTelemetry(runId: UUID, request: UpdateTelemetryRequest): RunResponse {
+        val run = requireRun(runId)
+
+        request.behavior?.let {
+            run.behavior = BehaviorMetrics(
+                modelCalls = it.modelCalls,
+                toolCalls = it.toolCalls,
+                toolFailures = it.toolFailures,
+                retries = it.retries,
+                permissionRequests = it.permissionRequests,
+                permissionDenials = it.permissionDenials,
+            )
+        }
+
+        // Field-by-field so a partial payload cannot wipe values already recorded —
+        // durationMs in particular is measured by the runner, not read from telemetry.
+        request.efficiency?.let {
+            run.efficiency = EfficiencyMetrics(
+                durationMs = it.durationMs ?: run.efficiency.durationMs,
+                inputTokens = it.inputTokens ?: run.efficiency.inputTokens,
+                outputTokens = it.outputTokens ?: run.efficiency.outputTokens,
+                cachedTokens = it.cachedTokens ?: run.efficiency.cachedTokens,
+                estimatedCost = it.estimatedCost ?: run.efficiency.estimatedCost,
+            )
+        }
+
+        request.traceId?.takeIf { it.isNotBlank() }?.let { run.traceId = it }
+
+        return toResponse(runs.save(run))
+    }
+
+    /**
+     * Discard a run. Intended for runs invalidated by the *harness* rather than by the
+     * agent — a contaminated worktree, a mis-set variable, a bug in the runner. Keeping
+     * such a run would silently corrupt every aggregate it appears in, and there is no
+     * honest way to interpret it after the fact.
+     *
+     * Evaluations and human reviews are removed with it (ON DELETE CASCADE in V1).
+     */
+    fun deleteRun(runId: UUID) {
+        val run = requireRun(runId)
+        evaluations.findByRunId(runId)?.let(evaluations::delete)
+        reviews.findByRunIdOrderByReviewedAtDesc(runId).forEach(reviews::delete)
+        runs.delete(run)
     }
 
     fun addHumanReview(runId: UUID, request: CreateHumanReviewRequest): RunResponse {

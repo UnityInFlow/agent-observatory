@@ -121,10 +121,27 @@ fi
 RUNTIME_VERSION="${RUNTIME_VERSION:-unknown}"
 
 # --- 5. install and hash the customization (§12) ----------------------------
+# The commit the *evaluation* measures against. It is the benchmark baseline for a plain
+# run, but for a customized run it is a setup commit that already contains the
+# customization files.
+EVAL_BASELINE_SHA="$BASELINE_SHA"
+
 if [[ -n "$CUSTOMIZATION_DIR" ]]; then
   [[ -d "$CUSTOMIZATION_DIR" ]] || die "customization directory not found: $CUSTOMIZATION_DIR"
   cp -R "$CUSTOMIZATION_DIR"/. "$WORKTREE"/ || die "failed to install customization"
+
+  # Commit the overlay before the agent starts. Without this the customization files are
+  # part of the diff, so the scope guard blames the agent for a change the *harness* made
+  # — which failed every run of a treatment arm for a violation the agent never committed
+  # and made the comparison meaningless. The customization is starting state, not output.
+  git -C "$WORKTREE" add -A >/dev/null 2>&1
+  git -C "$WORKTREE" -c user.email=runner@observatory -c user.name=observatory-runner \
+      commit -qm "experiment setup: install customization for variant '${VARIANT}'" \
+    || die "failed to commit the customization overlay"
+  EVAL_BASELINE_SHA="$(git -C "$WORKTREE" rev-parse HEAD)"
+
   echo "  customization installed from ${CUSTOMIZATION_DIR}"
+  echo "  evaluation baseline moved to ${EVAL_BASELINE_SHA:0:12} (setup commit)"
 fi
 
 hash_of() {
@@ -220,15 +237,30 @@ DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
 # fields, and a headline metric reading zero. The worktree is disposable, so staging is free.
 git -C "$WORKTREE" add -A >/dev/null 2>&1 || true
 
-CHANGED_FILES=$(git -C "$WORKTREE" diff --name-only --cached "$BASELINE_SHA" \
+CHANGED_FILES=$(git -C "$WORKTREE" diff --name-only --cached "$EVAL_BASELINE_SHA" \
   | jq -R . | jq -sc 'map(select(length>0))')
-read -r ADDED DELETED <<<"$(git -C "$WORKTREE" diff --numstat --cached "$BASELINE_SHA" \
+read -r ADDED DELETED <<<"$(git -C "$WORKTREE" diff --numstat --cached "$EVAL_BASELINE_SHA" \
   | awk '$1 ~ /^[0-9]+$/ {a+=$1; d+=$2} END {print (a+0), (d+0)}')"
 
 echo
 echo "--- diff ------------------------------------------------------"
-git -C "$WORKTREE" diff --stat --cached "$BASELINE_SHA" || true
+git -C "$WORKTREE" diff --stat --cached "$EVAL_BASELINE_SHA" || true
 echo "---------------------------------------------------------------"
+
+# --- 9a. did the agent actually run? ---------------------------------------
+# A quota exhaustion, auth expiry or rate limit produces an empty diff, which the
+# evaluator can only see as "acceptance suite failed" and classifies as F03 (incorrect
+# code). That is a lie about the agent and it poisons any comparison the run appears in:
+# an exhausted quota would show up as the variant being less correct. The runner knows
+# better, because it can see the agent never did anything.
+AGENT_ABORTED=false
+ABORT_REASON=""
+if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" ]]; then
+  if grep -qiE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG"; then
+    AGENT_ABORTED=true
+    ABORT_REASON="$(grep -ioE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG" | head -1)"
+  fi
+fi
 
 # --- 9b. normalize vendor telemetry into our model (§35) --------------------
 BEHAVIOR='{}'
@@ -254,7 +286,7 @@ fi
 EVALUATION_JSON="${WORKTREE}/evaluation.json"
 echo
 "$BENCH_DIR/evaluator.sh" \
-  --baseline "$BASELINE_SHA" \
+  --baseline "$EVAL_BASELINE_SHA" \
   --service "$WORKTREE/sample-service" \
   --out "$EVALUATION_JSON" \
   --run-id "$RUN_ID"
@@ -309,8 +341,20 @@ curl -fsS -X POST "${API}/api/runs" -H 'Content-Type: application/json' \
   -d "$RUN_PAYLOAD" >/dev/null || die "failed to persist the run"
 
 if [[ -s "$EVALUATION_JSON" ]]; then
+  EVAL_PAYLOAD="$(jq -c "$EVALUATION_PAYLOAD_FILTER" "$EVALUATION_JSON")"
+
+  # §23: F13 is "timeout/rate limit", not F03 "incorrect code". Recording the true cause
+  # is the whole point of having a taxonomy instead of a FAIL counter.
+  if [[ "$AGENT_ABORTED" == true ]]; then
+    EVAL_PAYLOAD="$(jq -c '.failureClass = "F13" | .passed = false' <<<"$EVAL_PAYLOAD")"
+    echo
+    echo "  !! the agent never ran: ${ABORT_REASON}"
+    echo "     recorded as F13 (rate limit / quota), not F03 (incorrect code)."
+    echo "     EXCLUDE this run from comparisons — it measures your quota, not the variant."
+  fi
+
   curl -fsS -X POST "${API}/api/runs/${RUN_ID}/evaluation" -H 'Content-Type: application/json' \
-    -d "$(jq -c "$EVALUATION_PAYLOAD_FILTER" "$EVALUATION_JSON")" >/dev/null \
+    -d "$EVAL_PAYLOAD" >/dev/null \
     || die "failed to persist the evaluation"
 else
   echo "  warning: evaluator produced no evaluation.json — run recorded without a verdict" >&2

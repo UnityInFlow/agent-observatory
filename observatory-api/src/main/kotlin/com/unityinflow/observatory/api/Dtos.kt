@@ -120,6 +120,17 @@ data class CreateHumanReviewRequest(
     val notes: String? = null,
 )
 
+/**
+ * Backfills behaviour/efficiency for a run whose telemetry was unavailable when it was
+ * first recorded — a collector outage, or an adapter that did not exist yet. Only
+ * non-null fields are applied, so a partial backfill cannot erase what is already there.
+ */
+data class UpdateTelemetryRequest(
+    val behavior: BehaviorDto? = null,
+    val efficiency: EfficiencyDto? = null,
+    val traceId: String? = null,
+)
+
 data class UpsertBenchmarkRequest(
     @field:NotBlank val id: String,
     @field:NotBlank val name: String,

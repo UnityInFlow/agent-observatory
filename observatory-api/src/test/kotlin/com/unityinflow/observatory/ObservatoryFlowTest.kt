@@ -8,7 +8,9 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -138,6 +140,52 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
         mockMvc.perform(get("/api/runs/$runId"))
             .andExpect(jsonPath("$.evaluation.passed").value(true))
             .andExpect(jsonPath("$.evaluation.failureClass").doesNotExist())
+    }
+
+    @Test
+    fun `backfills telemetry without erasing what the runner already measured`() {
+        registerBenchmark("BE-FLOW-6")
+        val runId = createRun("BE-FLOW-6", "EXP-BACKFILL", "baseline", toolCalls = 0, durationMs = 49_000)
+
+        // A run recorded before its trace was available: duration measured by the runner,
+        // behaviour metrics absent.
+        mockMvc.perform(
+            patch("/api/runs/$runId/telemetry").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "behavior": { "modelCalls": 10, "toolCalls": 15, "toolFailures": 1 },
+                  "efficiency": { "inputTokens": 243872, "outputTokens": 2579, "cachedTokens": 225280 },
+                  "traceId": "8439c5f1006ab0812abc6684d7fe512"
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isOk)
+
+        mockMvc.perform(get("/api/runs/$runId"))
+            .andExpect(jsonPath("$.behavior.toolCalls").value(15))
+            .andExpect(jsonPath("$.behavior.modelCalls").value(10))
+            .andExpect(jsonPath("$.efficiency.inputTokens").value(243872))
+            .andExpect(jsonPath("$.traceId").value("8439c5f1006ab0812abc6684d7fe512"))
+            // The payload carried no durationMs; the runner's measurement must survive.
+            .andExpect(jsonPath("$.efficiency.durationMs").value(49000))
+    }
+
+    @Test
+    fun `discards a run invalidated by the harness, including its evaluation`() {
+        registerBenchmark("BE-FLOW-7")
+        val keep = createRun("BE-FLOW-7", "EXP-DELETE", "baseline", toolCalls = 13, durationMs = 40_000)
+        val drop = createRun("BE-FLOW-7", "EXP-DELETE", "baseline", toolCalls = 99, durationMs = 40_000)
+        evaluate(keep, passed = true)
+        evaluate(drop, passed = false)
+
+        mockMvc.perform(delete("/api/runs/$drop")).andExpect(status().isNoContent)
+        mockMvc.perform(get("/api/runs/$drop")).andExpect(status().isNotFound)
+
+        // The discarded run must leave no trace in the aggregates it polluted.
+        mockMvc.perform(get("/api/experiments/EXP-DELETE/comparison"))
+            .andExpect(jsonPath("$.totalRuns").value(1))
+            .andExpect(jsonPath("$.variants[0].passRate").value(1.0))
+            .andExpect(jsonPath("$.variants[0].medianToolCalls").value(13.0))
     }
 
     @Test

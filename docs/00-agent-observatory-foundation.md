@@ -159,6 +159,57 @@ Two honest gaps:
 
 ---
 
+## Experiment 2 — B0 plain vs B1 `+ AGENTS.md`
+
+Same runtime, same model, same benchmark, same baseline commit. One variable changed:
+an `AGENTS.md` describing the repository layout, build commands, validation convention
+and scope constraints (`experiments/agents-md-v1/`, hash recorded on every run).
+
+Raw values, one per run:
+
+```text
+baseline (n=6)      tool calls  [ 9, 12, 13, 13, 15, 17]   median 13
+                    input tok   [155k, 171k, 193k, 223k, 244k, 277k]   median 208k
+                    pass        6/6
+
+instructions (n=4)  tool calls  [10, 11, 12, 13]           median 11.5
+                    input tok   [169k, 219k, 220k, 246k]   median 219k
+                    pass        4/4
+```
+
+### Verdict: no detectable effect. Do not keep on this evidence.
+
+- **Correctness is unchanged** — both arms pass every acceptance criterion. There was no
+  headroom to improve; BE-001 is too easy for this model to show a correctness effect.
+- **Tool calls look ~12% lower** (13 → 11.5) — but *every one of the four instructions
+  values falls inside the baseline's observed range of 9–17*. This is what "inside the
+  noise" looks like in practice.
+- **Tokens went slightly up**, not down (208k → 219k). If the tool-call drop were a real
+  efficiency gain, tokens would be expected to follow it down. They did not.
+- **The narrower instructions range is not evidence of stability.** Four draws will
+  usually span less than six draws from the same distribution. Comparing a range across
+  unequal sample sizes is a trap, not a finding.
+
+A hypothesis worth testing later: both arms wrote a test on every run, so the
+instruction "add new tests next to the existing ones" changed nothing that was not
+already happening. `AGENTS.md` may simply have had nothing left to fix on this task.
+
+**Decision: reject for now, re-run at 10 per variant on a harder benchmark.** The honest
+conclusion is not "AGENTS.md does not help" — it is "this benchmark cannot tell".
+
+### Caveats on this experiment
+
+- The instructions arm has **4 valid runs, below the 5-run minimum of §20**. A fifth run
+  aborted with `You have no quota` and is recorded as **F13** (rate limit), not F03. It is
+  excluded from every number above.
+- `ComparisonService` still counts F13 runs toward its minimum-sample warning, so the API
+  reported no warning for an arm that is in fact under-powered. The analysis above was
+  computed with F13 filtered out; the API should do that itself.
+- Two harness bugs were found *by this experiment* and fixed before the numbers above
+  were taken; the first set of treatment runs was discarded. See the PR for detail.
+
+---
+
 ## Reading list
 
 1. [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works) — context gathering, action/tool loop, verification.

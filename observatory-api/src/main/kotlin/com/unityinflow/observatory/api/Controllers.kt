@@ -12,8 +12,10 @@ import java.util.UUID
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -47,6 +49,20 @@ class RunController(private val runService: RunService) {
         @PathVariable id: UUID,
         @Valid @RequestBody request: CreateEvaluationRequest,
     ): RunResponse = runService.recordEvaluation(id, request)
+
+    /** Backfill telemetry for a run recorded before its trace was available. */
+    @PatchMapping("/{id}/telemetry")
+    fun telemetry(
+        @PathVariable id: UUID,
+        @Valid @RequestBody request: UpdateTelemetryRequest,
+    ): RunResponse = runService.updateTelemetry(id, request)
+
+    /** Discard a run invalidated by the harness rather than by the agent. */
+    @DeleteMapping("/{id}")
+    fun delete(@PathVariable id: UUID): ResponseEntity<Void> {
+        runService.deleteRun(id)
+        return ResponseEntity.noContent().build()
+    }
 
     @PostMapping("/{id}/human-review")
     fun review(
