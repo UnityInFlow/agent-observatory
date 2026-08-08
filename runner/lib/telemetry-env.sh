@@ -38,6 +38,10 @@ case "$RUNTIME" in
     export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     export OTEL_EXPORTER_OTLP_ENDPOINT="$OTLP_GRPC_ENDPOINT"
     export OTEL_SERVICE_NAME=claude-code
+    # Short intervals so a 40-second benchmark run has actually flushed its events by
+    # the time the adapter reads them.
+    export OTEL_METRIC_EXPORT_INTERVAL=3000
+    export OTEL_LOGS_EXPORT_INTERVAL=3000
     # Claude Code redacts these by default; the bank baseline keeps them off explicitly.
     export OTEL_LOG_USER_PROMPTS=0
     export OTEL_LOG_ASSISTANT_RESPONSES=0

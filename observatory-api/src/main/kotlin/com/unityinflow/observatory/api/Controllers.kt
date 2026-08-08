@@ -93,6 +93,7 @@ class ExperimentController(
 class BenchmarkController(
     private val benchmarks: BenchmarkRepository,
     private val runs: AgentRunRepository,
+    private val comparisonService: ComparisonService,
 ) {
 
     @PostMapping
@@ -117,6 +118,24 @@ class BenchmarkController(
     fun list(): List<BenchmarkResponse> = benchmarks.findAll().map { benchmark ->
         benchmark.toResponse(runs.search(benchmark.id, null, null).size)
     }
+
+    /**
+     * Compare every run of this benchmark across experiments — the only way to put two
+     * runtimes side by side (§20 experiment 5). `groupBy=runtime` groups by
+     * provider/model; `groupBy=variant` groups by customization.
+     */
+    @GetMapping("/{id}/comparison")
+    fun comparison(
+        @PathVariable id: String,
+        @RequestParam(defaultValue = "runtime") groupBy: String,
+    ): ComparisonResponse = comparisonService.compareBenchmark(
+        id,
+        when (groupBy.lowercase()) {
+            "variant" -> ComparisonService.GroupBy.VARIANT
+            "runtime" -> ComparisonService.GroupBy.RUNTIME
+            else -> throw NotFoundException("Unknown groupBy '$groupBy' (runtime|variant)")
+        },
+    )
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: String): BenchmarkResponse =

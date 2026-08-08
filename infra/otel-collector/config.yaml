@@ -28,7 +28,22 @@ processors:
         action: delete
       - key: gen_ai.system_instructions
         action: delete
+      # Developer identity. Claude Code's own documentation notes OAuth telemetry can
+      # carry user.email, and its log events additionally carry a stable user.id, account
+      # UUIDs, the organization id and the terminal app. §28: the purpose is to evaluate
+      # the *system*, not to rank developers — and none of this is needed for that.
+      # Doubly important now that events are persisted to disk for the adapters to read.
       - key: user.email
+        action: delete
+      - key: user.id
+        action: delete
+      - key: user.account_id
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+      - key: terminal.type
         action: delete
       - key: tool.arguments
         action: delete
@@ -49,6 +64,16 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: false
 
+  # Claude Code and Codex report agent activity as OTel *log events*, not spans (§25/§26).
+  # There is no trace to query them back out of, so events are written to a file the
+  # adapters can read per run. This is the "normalize logs, do not fake trace parity"
+  # path — the alternative would be inventing a span hierarchy that never existed.
+  file/events:
+    path: /var/telemetry/events.jsonl
+    rotation:
+      max_megabytes: 32
+      max_backups: 3
+
   debug:
     verbosity: basic
 
@@ -67,7 +92,7 @@ service:
     logs:
       receivers: [otlp]
       processors: [attributes/scrub, batch]
-      exporters: [debug]
+      exporters: [file/events, debug]
 
   telemetry:
     logs:
