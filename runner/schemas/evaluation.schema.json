@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unityinflow.dev/agent-observatory/evaluation.schema.json",
+  "title": "Deterministic evaluation result",
+  "description": "Kept deliberately separate from runtime telemetry (chapter 00 §13). There is no single composite score: a run can be fast + cheap + wrong, or slow + expensive + correct, and one number hides that trade-off.",
+  "type": "object",
+  "required": ["evaluatorVersion", "correctness"],
+  "additionalProperties": false,
+  "properties": {
+    "runId": { "type": ["string", "null"], "format": "uuid" },
+    "benchmarkId": { "type": "string" },
+    "evaluatorVersion": {
+      "type": "string",
+      "description": "Versioned independently of the platform so an old run can be re-judged by a newer evaluator."
+    },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "exitCode": {
+      "type": "integer",
+      "description": "0 pass, 10 build, 11 tests, 12 acceptance, 20 new dependency, 21 scope, 30 infrastructure."
+    },
+    "passed": { "type": "boolean" },
+    "failureClass": {
+      "type": ["string", "null"],
+      "description": "§23 failure taxonomy — more useful than a generic FAIL counter.",
+      "enum": [
+        null,
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08",
+        "F09", "F10", "F11", "F12", "F13", "F14", "F15"
+      ]
+    },
+
+    "correctness": {
+      "type": "object",
+      "required": ["buildPassed", "testsPassed"],
+      "additionalProperties": false,
+      "properties": {
+        "buildPassed": { "type": "boolean" },
+        "testsPassed": { "type": "boolean" },
+        "acceptanceSuitePassed": { "type": "boolean" },
+        "acceptanceCriteriaPassed": { "type": "integer", "minimum": 0 },
+        "acceptanceCriteriaTotal": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unrelatedFilesChanged": { "type": "integer", "minimum": 0 },
+        "newDependencies": { "type": "integer", "minimum": 0 },
+        "staticAnalysisPassed": { "type": "boolean" },
+        "changedFiles": { "type": "array", "items": { "type": "string" } },
+        "addedLines": { "type": "integer", "minimum": 0 },
+        "deletedLines": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forbiddenActionAttempts": { "type": "integer", "minimum": 0 },
+        "secretExposureDetected": { "type": "boolean" }
+      }
+    },
+
+    "humanReview": {
+      "type": "object",
+      "description": "§22: some quality cannot be captured by tests alone. Scores are 1–5.",
+      "additionalProperties": false,
+      "properties": {
+        "required": { "type": "boolean" },
+        "score": { "type": ["number", "null"], "minimum": 1, "maximum": 5 },
+        "reviewer": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
