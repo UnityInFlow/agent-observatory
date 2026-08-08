@@ -117,10 +117,45 @@ change. Blind review reduces confirmation bias.
 - [x] The evaluator independently marks runs pass/fail.
 - [x] The first Observatory API persists run/evaluation metadata.
 - [x] The web app can compare at least two variants.
-- [ ] We have at least five *real* clean baseline runs. — requires an agent runtime;
-      `make demo` seeds synthetic teaching data, which is explicitly not a measurement.
-- [ ] We know the baseline's variance and common failure modes. — follows from the above.
+- [x] We have at least five *real* clean baseline runs. — see below.
+- [x] We know the baseline's variance. Common failure modes are **not** yet known:
+      all five runs passed, so BE-001 has not yet produced a single failure to classify.
 - [x] We have not changed agent instructions merely to make charts look better.
+
+---
+
+## The first real baseline (EXP-BASELINE-COPILOT)
+
+Five runs of BE-001 against **GitHub Copilot CLI 1.0.74 / `gpt-5.4-mini`**, plain agent —
+`--no-custom-instructions`, no skills, no custom agent, no MCP. Same baseline commit,
+same task, same model.
+
+| | min | median | max | spread |
+|---|---:|---:|---:|---:|
+| pass rate | | **5/5** | | — |
+| tool calls | 9 | 13 | 17 | **1.9×** |
+| model calls | 6 | 8 | 11 | **1.8×** |
+| input tokens | 154,893 | 193,344 | 276,882 | **1.8×** |
+| duration | 35 s | 38 s | 43 s | 1.2× |
+| changed files | 2 | 2 | 3 | 1.5× |
+
+**This is the point of the whole chapter.** Correctness was perfectly stable — every run
+satisfied all six acceptance criteria, changed no unrelated file and added no dependency.
+Resource consumption was not: the same agent, on the same task, from the same commit,
+used nearly **twice** as many tool calls and tokens on one run as on another.
+
+The consequence is concrete: a single A/B run showing "20% fewer tool calls after adding
+`AGENTS.md`" would be **inside this baseline's noise** and would prove nothing. Any future
+customization has to beat a ~1.9× spread before the result means anything, which is
+exactly why §20 asks for 5–10 runs per variant rather than one.
+
+Two honest gaps:
+
+- **No failure modes observed.** BE-001 is easy for this model, so the §23 taxonomy is
+  still untested against real data. A harder benchmark is needed before failure-class
+  comparisons carry weight.
+- **Retries and permission decisions read 0** — Copilot's trace does not expose them, and
+  the adapter records what exists rather than inventing plausible numbers.
 
 ---
 

@@ -88,8 +88,28 @@ Experiment ──< AgentRun >── Benchmark
                   └── HumanReview            (0..n, 1–5 rubric)
 ```
 
-Adapters (`ClaudeTelemetryAdapter`, `CodexTelemetryAdapter`, …) produce the *same*
-`BehaviorMetrics` and `EfficiencyMetrics` regardless of native field names.
+Adapters produce the *same* `BehaviorMetrics` and `EfficiencyMetrics` regardless of
+native field names. The first one, `runner/lib/copilot-telemetry.sh`, reads the run's
+trace back out of Tempo and maps it:
+
+| Copilot telemetry | Internal field |
+|---|---|
+| spans named `chat *` | `behavior.modelCalls` |
+| spans named `execute_tool *` | `behavior.toolCalls` |
+| `execute_tool` spans with `status.code == 2` | `behavior.toolFailures` |
+| `gen_ai.usage.input_tokens` (summed) | `efficiency.inputTokens` |
+| `gen_ai.usage.output_tokens` (summed) | `efficiency.outputTokens` |
+| `gen_ai.usage.cache_read.input_tokens` (summed) | `efficiency.cachedTokens` |
+| `github.copilot.cost` | **not** mapped to `estimatedCost` — see below |
+
+It is the only file that knows Copilot's span names, and it emits nothing
+Copilot-specific. Fields Copilot does not expose — retries, permission decisions — stay
+`0` rather than being invented.
+
+`github.copilot.cost` is deliberately left out of `estimatedCost`. Copilot does not
+document its unit, and §14 only admits a normalized cost "where defensible"; writing an
+unverified number into a currency field would silently poison every cost comparison built
+on top of it. The raw value is surfaced separately as `vendorCostRaw`.
 
 `null` in `EfficiencyMetrics` is meaningful: it means the runtime does not expose the
 value, which is different from zero.
