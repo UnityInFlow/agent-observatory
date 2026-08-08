@@ -24,11 +24,18 @@ EXPERIMENT="${EXPERIMENT:-EXP-001}"
 BENCHMARKS_REPO="${BENCHMARKS_REPO:-$(cd "$REPO_ROOT/../agent-observatory-benchmarks" 2>/dev/null && pwd)}"
 API="${API:-http://localhost:8080}"
 WEB="${WEB:-http://localhost:5173}"
+TEMPO_URL="${TEMPO_URL:-http://localhost:3200}"
 # Directory whose contents are copied into the worktree before the agent starts, e.g. a
 # folder holding AGENTS.md. This is what makes a B0-vs-B1 comparison possible: the files
 # are overlaid and then hashed, so the variant is reproducible rather than just labelled.
 CUSTOMIZATION_DIR=""
 KEEP_WORKTREE=false
+# Pin the model explicitly. `auto` lets the vendor pick, which silently breaks the
+# "change one variable" rule the moment their routing changes underneath a comparison.
+AGENT_MODEL="${AGENT_MODEL:-}"
+# Headless by default for repeated baseline runs; --interactive restores the watch-it-work
+# mode that §11 asks for on the very first run.
+INTERACTIVE=false
 
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
@@ -42,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --api)        API="$2"; shift 2 ;;
     --web)        WEB="$2"; shift 2 ;;
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
+    --model)      AGENT_MODEL="$2"; shift 2 ;;
+    --interactive) INTERACTIVE=true; shift ;;
     --keep)       KEEP_WORKTREE=true; shift ;;
     -h|--help)    usage ;;
     *) echo "run-agent: unknown argument '$1'" >&2; exit 2 ;;
@@ -137,6 +146,9 @@ RUN_ID="$RUN_ID" BENCHMARK_ID="$BENCHMARK_ID" VARIANT="$VARIANT" \
 # --- 7/8. start the agent and wait -----------------------------------------
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 START_MS=$(( $(date +%s) * 1000 ))
+# Deliberately outside the worktree: anything written inside it would be staged by the
+# diff step and counted as a file the agent changed.
+AGENT_LOG="${TMPDIR:-/tmp}/observatory-agent-${RUN_ID}.log"
 
 echo
 echo "--- task ------------------------------------------------------"
@@ -158,13 +170,42 @@ case "$RUNTIME" in
     read -r -p "Press ENTER when the run is complete... " _
     ;;
   copilot)
-    ( cd "$WORKTREE" && copilot ) || echo "run-agent: copilot exited non-zero — recording the run anyway"
+    # A plain baseline means a *plain* agent: with no customization installed, custom
+    # instruction files are disabled explicitly, otherwise a stray AGENTS.md anywhere in
+    # scope would quietly contaminate the run that is supposed to be the control.
+    COPILOT_ARGS=(--allow-all-tools --allow-all-paths --no-ask-user --no-color)
+    [[ -n "$AGENT_MODEL" ]] && COPILOT_ARGS+=(--model "$AGENT_MODEL")
+    [[ -z "$CUSTOMIZATION_DIR" ]] && COPILOT_ARGS+=(--no-custom-instructions)
+
+    if [[ "$INTERACTIVE" == true ]]; then
+      ( cd "$WORKTREE" && copilot "${COPILOT_ARGS[@]}" ) \
+        || echo "run-agent: copilot exited non-zero — recording the run anyway"
+    else
+      ( cd "$WORKTREE" && copilot "${COPILOT_ARGS[@]}" --prompt "$(cat "$BENCH_DIR/task.md")" ) \
+        2>&1 | tee "$AGENT_LOG" \
+        || echo "run-agent: copilot exited non-zero — recording the run anyway"
+    fi
     ;;
   claude)
-    ( cd "$WORKTREE" && claude ) || echo "run-agent: claude exited non-zero — recording the run anyway"
+    CLAUDE_ARGS=(--permission-mode acceptEdits)
+    [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
+    if [[ "$INTERACTIVE" == true ]]; then
+      ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" ) \
+        || echo "run-agent: claude exited non-zero — recording the run anyway"
+    else
+      ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" -p "$(cat "$BENCH_DIR/task.md")" ) \
+        2>&1 | tee "$AGENT_LOG" \
+        || echo "run-agent: claude exited non-zero — recording the run anyway"
+    fi
     ;;
   codex)
-    ( cd "$WORKTREE" && codex ) || echo "run-agent: codex exited non-zero — recording the run anyway"
+    if [[ "$INTERACTIVE" == true ]]; then
+      ( cd "$WORKTREE" && codex ) || echo "run-agent: codex exited non-zero — recording the run anyway"
+    else
+      ( cd "$WORKTREE" && codex exec "$(cat "$BENCH_DIR/task.md")" ) \
+        2>&1 | tee "$AGENT_LOG" \
+        || echo "run-agent: codex exited non-zero — recording the run anyway"
+    fi
     ;;
 esac
 
@@ -188,6 +229,26 @@ echo
 echo "--- diff ------------------------------------------------------"
 git -C "$WORKTREE" diff --stat --cached "$BASELINE_SHA" || true
 echo "---------------------------------------------------------------"
+
+# --- 9b. normalize vendor telemetry into our model (§35) --------------------
+BEHAVIOR='{}'
+EFFICIENCY_EXTRA='{}'
+TRACE_ID=""
+if [[ "$RUNTIME" == "copilot" ]]; then
+  echo
+  echo "==> reading telemetry back from Tempo"
+  TELEMETRY="$(TEMPO_URL="$TEMPO_URL" "$HERE/lib/copilot-telemetry.sh" "$RUN_ID" || echo null)"
+  if [[ -n "$TELEMETRY" && "$TELEMETRY" != "null" ]]; then
+    BEHAVIOR="$(jq -c '.behavior' <<<"$TELEMETRY")"
+    EFFICIENCY_EXTRA="$(jq -c '.efficiency' <<<"$TELEMETRY")"
+    TRACE_ID="$(jq -r '.traceId // empty' <<<"$TELEMETRY")"
+    jq -r '"    model calls \(.behavior.modelCalls)   tool calls \(.behavior.toolCalls)   " +
+           "tokens ↑\(.efficiency.inputTokens) ↓\(.efficiency.outputTokens)"' <<<"$TELEMETRY"
+    jq -r '.toolBreakdown[] | "    \(.calls)× \(.tool)"' <<<"$TELEMETRY"
+  else
+    echo "    no telemetry found — behaviour metrics stay empty rather than guessed"
+  fi
+fi
 
 # --- 10. deterministic evaluator -------------------------------------------
 EVALUATION_JSON="${WORKTREE}/evaluation.json"
@@ -225,19 +286,22 @@ RUN_PAYLOAD=$(jq -nc \
   --arg runId "$RUN_ID" --arg exp "$EXPERIMENT" --arg bench "$BENCHMARK_ID" \
   --arg variant "$VARIANT" --arg started "$STARTED_AT" --arg finished "$FINISHED_AT" \
   --arg provider "$PROVIDER" --arg product "$PRODUCT" --arg version "$RUNTIME_VERSION" \
-  --arg model "${AGENT_MODEL:-unknown}" --arg sha "$BASELINE_SHA" \
+  --arg model "${AGENT_MODEL:-auto}" --arg sha "$BASELINE_SHA" \
   --argjson customization "$CUSTOMIZATION" \
   --argjson duration "$DURATION_MS" --argjson changed "$CHANGED_FILES" \
   --argjson added "${ADDED:-0}" --argjson deleted "${DELETED:-0}" \
+  --argjson behavior "$BEHAVIOR" --argjson efficiencyExtra "$EFFICIENCY_EXTRA" \
+  --arg traceId "$TRACE_ID" \
   '{
     runId:$runId, experimentId:$exp, benchmarkId:$bench, variant:$variant,
     startedAt:$started, finishedAt:$finished,
     runtime:{provider:$provider, product:$product, version:$version, model:$model},
     repository:{commitSha:$sha, dirtyBeforeRun:false},
     customization:$customization,
-    behavior:{},
-    efficiency:{durationMs:$duration},
+    behavior:$behavior,
+    efficiency:({durationMs:$duration} + $efficiencyExtra),
     result:{changedFiles:$changed, addedLines:$added, deletedLines:$deleted},
+    traceId:(if $traceId == "" then null else $traceId end),
     telemetryQueryKey:("{ resource.observatory.run.id = \"" + $runId + "\" }")
   }')
 
