@@ -1,0 +1,293 @@
+package com.unityinflow.observatory.domain
+
+import jakarta.persistence.Column
+import jakarta.persistence.Embeddable
+import jakarta.persistence.Embedded
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import java.math.BigDecimal
+import java.time.Instant
+import java.util.UUID
+
+/**
+ * The internal experiment model. Vendor telemetry is normalized *into* these types by
+ * adapters — the rule in chapter 00 §35 is that no vendor's field names may ever become
+ * the domain model.
+ */
+
+@Entity
+@Table(name = "experiment")
+class Experiment(
+    @Id
+    var id: UUID = UUID.randomUUID(),
+
+    @Column(nullable = false)
+    var name: String = "",
+
+    @Column(columnDefinition = "text")
+    var hypothesis: String? = null,
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now(),
+)
+
+@Entity
+@Table(name = "benchmark")
+class Benchmark(
+    /** Human-stable identifier such as `BE-001`. */
+    @Id
+    var id: String = "",
+
+    @Column(nullable = false)
+    var name: String = "",
+
+    @Column(nullable = false)
+    var category: String = "",
+
+    var repository: String? = null,
+
+    @Column(columnDefinition = "text")
+    var prompt: String? = null,
+
+    @Column(columnDefinition = "text")
+    var constraints: String? = null,
+
+    @Column(name = "acceptance_criteria", columnDefinition = "text")
+    var acceptanceCriteria: String? = null,
+
+    @Column(name = "evaluator_version")
+    var evaluatorVersion: String? = null,
+
+    @Column(name = "baseline_commit")
+    var baselineCommit: String? = null,
+)
+
+@Entity
+@Table(name = "customization_snapshot")
+class CustomizationSnapshot(
+    @Id
+    var id: UUID = UUID.randomUUID(),
+
+    @Column(name = "instructions_hash")
+    var instructionsHash: String? = null,
+
+    @Column(name = "skills_hash")
+    var skillsHash: String? = null,
+
+    @Column(name = "agent_hash")
+    var agentHash: String? = null,
+
+    @Column(name = "hooks_hash")
+    var hooksHash: String? = null,
+
+    @Column(name = "mcp_hash")
+    var mcpHash: String? = null,
+)
+
+@Embeddable
+class AgentRuntime(
+    @Column(nullable = false)
+    var provider: String = "",
+
+    @Column(nullable = false)
+    var product: String = "",
+
+    @Column(name = "runtime_version")
+    var version: String? = null,
+
+    var model: String? = null,
+)
+
+@Embeddable
+class BehaviorMetrics(
+    @Column(name = "model_calls", nullable = false)
+    var modelCalls: Int = 0,
+
+    @Column(name = "tool_calls", nullable = false)
+    var toolCalls: Int = 0,
+
+    @Column(name = "tool_failures", nullable = false)
+    var toolFailures: Int = 0,
+
+    @Column(nullable = false)
+    var retries: Int = 0,
+
+    @Column(name = "permission_requests", nullable = false)
+    var permissionRequests: Int = 0,
+
+    @Column(name = "permission_denials", nullable = false)
+    var permissionDenials: Int = 0,
+)
+
+@Embeddable
+class EfficiencyMetrics(
+    @Column(name = "duration_ms")
+    var durationMs: Long? = null,
+
+    @Column(name = "input_tokens")
+    var inputTokens: Long? = null,
+
+    @Column(name = "output_tokens")
+    var outputTokens: Long? = null,
+
+    @Column(name = "cached_tokens")
+    var cachedTokens: Long? = null,
+
+    @Column(name = "estimated_cost")
+    var estimatedCost: BigDecimal? = null,
+) {
+    /** Null when the runtime exposes no token information at all, rather than 0. */
+    fun totalTokens(): Long? =
+        if (inputTokens == null && outputTokens == null) null
+        else (inputTokens ?: 0L) + (outputTokens ?: 0L)
+}
+
+@Embeddable
+class ChangeSummary(
+    @Column(name = "added_lines", nullable = false)
+    var addedLines: Int = 0,
+
+    @Column(name = "deleted_lines", nullable = false)
+    var deletedLines: Int = 0,
+
+    /** Newline-delimited paths. v1 stores no structured telemetry here by design. */
+    @Column(name = "changed_files", columnDefinition = "text")
+    var changedFiles: String? = null,
+)
+
+@Entity
+@Table(name = "agent_run")
+class AgentRun(
+    @Id
+    var id: UUID = UUID.randomUUID(),
+
+    @Column(name = "experiment_id")
+    var experimentId: UUID? = null,
+
+    @Column(name = "benchmark_id", nullable = false)
+    var benchmarkId: String = "",
+
+    @Column(nullable = false)
+    var variant: String = "baseline",
+
+    @Column(name = "started_at", nullable = false)
+    var startedAt: Instant = Instant.now(),
+
+    @Column(name = "finished_at")
+    var finishedAt: Instant? = null,
+
+    @Embedded
+    var runtime: AgentRuntime = AgentRuntime(),
+
+    @Column(name = "commit_sha")
+    var commitSha: String? = null,
+
+    @Column(name = "dirty_before_run", nullable = false)
+    var dirtyBeforeRun: Boolean = false,
+
+    @Column(name = "customization_id")
+    var customizationId: UUID? = null,
+
+    @Embedded
+    var behavior: BehaviorMetrics = BehaviorMetrics(),
+
+    @Embedded
+    var efficiency: EfficiencyMetrics = EfficiencyMetrics(),
+
+    @Embedded
+    var result: ChangeSummary = ChangeSummary(),
+
+    @Column(name = "trace_id")
+    var traceId: String? = null,
+
+    @Column(name = "telemetry_query_key")
+    var telemetryQueryKey: String? = null,
+)
+
+@Entity
+@Table(name = "evaluation")
+class Evaluation(
+    @Id
+    var id: UUID = UUID.randomUUID(),
+
+    @Column(name = "run_id", nullable = false)
+    var runId: UUID = UUID.randomUUID(),
+
+    @Column(name = "evaluator_version", nullable = false)
+    var evaluatorVersion: String = "",
+
+    @Column(name = "completed_at", nullable = false)
+    var completedAt: Instant = Instant.now(),
+
+    @Column(name = "exit_code", nullable = false)
+    var exitCode: Int = 0,
+
+    @Column(nullable = false)
+    var passed: Boolean = false,
+
+    /** Failure taxonomy code from §23, e.g. `F03`. Null on a passing run. */
+    @Column(name = "failure_class")
+    var failureClass: String? = null,
+
+    @Column(name = "build_passed", nullable = false)
+    var buildPassed: Boolean = false,
+
+    @Column(name = "tests_passed", nullable = false)
+    var testsPassed: Boolean = false,
+
+    @Column(name = "acceptance_criteria_passed", nullable = false)
+    var acceptanceCriteriaPassed: Int = 0,
+
+    @Column(name = "acceptance_criteria_total", nullable = false)
+    var acceptanceCriteriaTotal: Int = 0,
+
+    @Column(name = "unrelated_files_changed", nullable = false)
+    var unrelatedFilesChanged: Int = 0,
+
+    @Column(name = "new_dependencies", nullable = false)
+    var newDependencies: Int = 0,
+
+    @Column(name = "static_analysis_passed", nullable = false)
+    var staticAnalysisPassed: Boolean = true,
+
+    @Column(name = "forbidden_action_attempts", nullable = false)
+    var forbiddenActionAttempts: Int = 0,
+
+    @Column(name = "secret_exposure_detected", nullable = false)
+    var secretExposureDetected: Boolean = false,
+) {
+    fun acceptanceRate(): Double =
+        if (acceptanceCriteriaTotal == 0) 0.0
+        else acceptanceCriteriaPassed.toDouble() / acceptanceCriteriaTotal
+}
+
+@Entity
+@Table(name = "human_review")
+class HumanReview(
+    @Id
+    var id: UUID = UUID.randomUUID(),
+
+    @Column(name = "run_id", nullable = false)
+    var runId: UUID = UUID.randomUUID(),
+
+    @Column(nullable = false)
+    var reviewer: String = "",
+
+    @Column(name = "reviewed_at", nullable = false)
+    var reviewedAt: Instant = Instant.now(),
+
+    /** 1–5 rubric scores from §22. */
+    var correctness: Int? = null,
+
+    @Column(name = "scope_discipline")
+    var scopeDiscipline: Int? = null,
+
+    var maintainability: Int? = null,
+
+    @Column(name = "test_quality")
+    var testQuality: Int? = null,
+
+    @Column(columnDefinition = "text")
+    var notes: String? = null,
+)
