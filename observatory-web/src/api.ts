@@ -85,7 +85,10 @@ export interface Run {
 
 export interface VariantComparison {
   variant: string;
+  /** Runs that measure the variant. Infrastructure failures are excluded from every number here. */
   runs: number;
+  /** F13/F15 runs discarded as harness or environment failures — reported, never averaged. */
+  infrastructureFailures: number;
   passed: number;
   passRate: number;
   acceptanceRate: number;

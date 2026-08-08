@@ -260,6 +260,13 @@ class Evaluation(
     fun acceptanceRate(): Double =
         if (acceptanceCriteriaTotal == 0) 0.0
         else acceptanceCriteriaPassed.toDouble() / acceptanceCriteriaTotal
+
+    /**
+     * The harness or the environment failed, not the agent — see [FailureTaxonomy].
+     * Such a run is recorded and stays visible, but measures nothing about the variant.
+     */
+    fun isInfrastructureFailure(): Boolean =
+        !passed && FailureTaxonomy.isInfrastructure(failureClass)
 }
 
 @Entity

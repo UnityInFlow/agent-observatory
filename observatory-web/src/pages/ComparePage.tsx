@@ -23,7 +23,7 @@ interface MetricRow {
 
 const ROWS: MetricRow[] = [
   // Sample size is context, not a score — more runs is not "better".
-  { label: 'runs', value: (v) => v.runs, format: (n) => fmtNumber(n, 0), better: 'neutral' },
+  { label: 'measuring runs', value: (v) => v.runs, format: (n) => fmtNumber(n, 0), better: 'neutral' },
   { label: 'acceptance', value: (v) => v.acceptanceRate, format: fmtPercent, better: 'higher' },
   { label: 'pass rate', value: (v) => v.passRate, format: fmtPercent, better: 'higher' },
   { label: 'tool calls (median)', value: (v) => v.medianToolCalls, format: (n) => fmtNumber(n), better: 'lower' },
@@ -119,6 +119,14 @@ export default function ComparePage() {
                   </tr>
                 );
               })}
+              <tr>
+                <td>discarded (F13/F15)</td>
+                {data.variants.map((v) => (
+                  <td key={v.variant} className="num muted">
+                    {v.infrastructureFailures === 0 ? '—' : v.infrastructureFailures}
+                  </td>
+                ))}
+              </tr>
               <tr>
                 <td>failure classes</td>
                 {data.variants.map((v) => (

@@ -200,7 +200,13 @@ data class RunResponse(
 
 data class VariantComparison(
     val variant: String,
+    /** Runs that actually measure this variant — infrastructure failures are not among them. */
     val runs: Int,
+    /**
+     * §23 F13/F15 — runs discarded as harness or environment failures (#19). Excluded from
+     * every number below and from the §20 minimum, but surfaced so they never vanish silently.
+     */
+    val infrastructureFailures: Int,
     val passed: Int,
     val passRate: Double,
     val acceptanceRate: Double,
@@ -216,6 +222,7 @@ data class VariantComparison(
 data class ComparisonResponse(
     val experimentId: UUID?,
     val experimentKey: String?,
+    /** Every run recorded, including the infrastructure failures the variants exclude. */
     val totalRuns: Int,
     val variants: List<VariantComparison>,
     /** §20: one successful run proves very little. */
