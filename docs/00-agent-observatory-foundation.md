@@ -49,7 +49,7 @@ evaluator agree it was correct.
 | **M7** | Web MVP: Runs, Detail, Compare, Benchmark | baseline and customized runs comparable in a browser | done |
 | **M8** | benchmark runner + one-command ecosystem | a clean machine reaches a working stack with `make up` | done |
 | **M9** | Grafana dashboard + metric catalog | seven panels, low cardinality, documented non-KPIs | done |
-| M10 | Claude Code adapter | same benchmark appears beside Copilot | open |
+| **M10** | Claude Code adapter | same benchmark appears beside Copilot | done |
 | M11 | Codex adapter | same comparison model despite different native telemetry | open |
 
 ---
@@ -118,8 +118,9 @@ change. Blind review reduces confirmation bias.
 - [x] The first Observatory API persists run/evaluation metadata.
 - [x] The web app can compare at least two variants.
 - [x] We have at least five *real* clean baseline runs. — see below.
-- [x] We know the baseline's variance. Common failure modes are **not** yet known:
-      all five runs passed, so BE-001 has not yet produced a single failure to classify.
+- [x] We know the baseline's variance. Failure modes are now **partly** known: BE-001
+      never failed in 17 runs, and BE-002 has produced exactly one real agent failure
+      (F07, scope) in five — enough to exercise the taxonomy, not enough to compare on.
 - [x] We have not changed agent instructions merely to make charts look better.
 
 ---
@@ -207,6 +208,72 @@ conclusion is not "AGENTS.md does not help" — it is "this benchmark cannot tel
   computed with F13 filtered out; the API should do that itself.
 - Two harness bugs were found *by this experiment* and fixed before the numbers above
   were taken; the first set of treatment runs was discarded. See the PR for detail.
+
+---
+
+## Experiment 3 — BE-002 plain baseline (EXP-BE002-B0)
+
+Five runs of BE-002 against **Claude Code 2.1.226 / `claude-haiku-4-5`**, plain agent, no
+customization installed. BE-002 was built to fail where BE-001 could not: the ticket asks
+only for HTTP 400, while the service answers every error with an `ApiError` envelope that
+the obvious `@Positive` + `@Valid` solution bypasses.
+
+| run | verdict | class | tool calls | model calls | duration |
+|---|---|---|---:|---:|---:|
+| 1 | pass | — | 27 | 29 | 150 s |
+| 2 | pass | — | 19 | 24 | 133 s |
+| 3 | **fail** | **F07** | 20 | 26 | 127 s |
+| 4 | pass | — | 16 | 20 | 112 s |
+| 5 | pass | — | 27 | 33 | 150 s |
+
+| | min | median | max | spread |
+|---|---:|---:|---:|---:|
+| pass rate | | **4/5 (80%)** | | — |
+| tool calls | 16 | 20 | 27 | 1.7× |
+| model calls | 20 | 26 | 33 | 1.7× |
+| output tokens | 6,734 | 8,594 | 10,030 | 1.5× |
+| **cached tokens** | 764,558 | **1,025,390** | 1,486,414 | **1.9×** |
+| cost (USD) | 0.179 | 0.213 | 0.263 | 1.5× |
+| duration | 112 s | 133 s | 150 s | 1.3× |
+
+### The exit criterion was not met
+
+benchmarks#6 asked for a plain baseline that fails **30–70%** of runs. BE-002 failed
+**20%**. It is better than BE-001, which failed 0% of 17 runs, but it is below the bar and
+must be reported as such rather than rounded up into a success.
+
+### The designed discriminator never fired
+
+Not one run failed AC4, the error-contract check. In all four runs that got that far the
+agent read the neighbouring 404 and 409 handlers and matched the envelope. The premise —
+"the obvious answer wins" — is simply weaker than assumed for this model on this task.
+The F02 exit path is, so far, decoration.
+
+### What did fail is more useful than what was designed
+
+Run 3 wrote **`run_tests.sh` into the repository root** and left it there. Build passed,
+existing tests passed, both acceptance suites passed; the submission was rejected by the
+scope guard as F07, unnecessary changes.
+
+This is the **first genuine agent failure this project has ever recorded** — the three
+previous ones were harness bugs. It was verified by reading the diff before being
+believed, per the standing rule about dramatic numbers.
+
+It also happens to be directly addressable by an instruction file: `agents-md-v1`
+already says *"Keep changes inside the feature you were asked to change"* — written long
+before BE-002 existed. A B0-vs-B1 result driven by **unmodified, pre-dating** instructions
+is far stronger evidence than one driven by a variant authored after seeing which failures
+occur. §32 forbids the second; this is the first.
+
+### Consequences for the next experiment
+
+- Run B0 vs B1 with `agents-md-v1` **unchanged**. Do not write a v2 that mentions the
+  error envelope until after this comparison; that is tuning instructions to the metric.
+- A binary pass rate at n=10 per arm is near powerless — 80% → 100% is p ≈ 0.47 by
+  Fisher's exact test. The primary outcome must be the continuous metrics, where the
+  spread is 1.5–1.9× and a rank test on n=10 has some chance of resolving a real shift.
+- Compare cost and cache tokens, not input+output. On these runs cache reads outnumber
+  input+output **117:1**, and an instruction file's entire footprint is context.
 
 ---
 
