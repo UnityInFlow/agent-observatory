@@ -19,6 +19,18 @@ curl -fsS "${API}/actuator/health" >/dev/null 2>&1 || {
   exit 1
 }
 
+# Seeding twice silently doubles the sample and re-weights every median, which is
+# exactly the wrong lesson for a tool about not fooling yourself with numbers.
+EXISTING=$(curl -fsS "${API}/api/experiments/${EXPERIMENT}/comparison" 2>/dev/null \
+  | jq -r '.totalRuns // 0' 2>/dev/null || echo 0)
+if [ "${EXISTING:-0}" -gt 0 ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "Experiment ${EXPERIMENT} already has ${EXISTING} runs."
+  echo "Seeding again would double the sample and change every median."
+  echo "  re-seed anyway:  FORCE=1 make demo"
+  echo "  or start clean:  make clean && make up && make demo"
+  exit 0
+fi
+
 echo "==> registering benchmark ${BENCHMARK}"
 curl -fsS -X POST "${API}/api/benchmarks" -H 'Content-Type: application/json' -d "$(jq -nc \
   --arg id "$BENCHMARK" '{

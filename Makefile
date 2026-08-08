@@ -153,7 +153,7 @@ test-web: ## Type-check and build the web app
 .PHONY: smoke
 smoke: ## End-to-end check against a running stack
 	@API=$(API_URL) WEB=$(WEB_URL) GRAFANA=$(GRAFANA_URL) PROM=$(PROMETHEUS_URL) TEMPO=$(TEMPO_URL) \
-	  $(RUNNER)/smoke-test.sh
+	  OTLP=http://localhost:$(OTLP_HTTP_PORT) $(RUNNER)/smoke-test.sh
 
 .PHONY: test-trace
 test-trace: ## Send a synthetic OTLP trace and confirm Tempo stored it (M2 exit criterion)
@@ -169,10 +169,16 @@ demo: ## Seed a baseline-vs-instructions experiment (10 runs) so Compare is mean
 	@API=$(API_URL) WEB=$(WEB_URL) $(RUNNER)/seed-demo.sh
 
 .PHONY: run-benchmark
-run-benchmark: ## Run BE-001 against a real agent runtime (RUNTIME=copilot|claude|codex|manual)
-	@API=$(API_URL) OTLP_HTTP_ENDPOINT=http://localhost:$(OTLP_HTTP_PORT) \
+run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUSTOMIZATION=)
+	@API=$(API_URL) WEB=$(WEB_URL) \
+	  OTLP_HTTP_ENDPOINT=http://localhost:$(OTLP_HTTP_PORT) \
 	  OTLP_GRPC_ENDPOINT=http://localhost:$(OTLP_GRPC_PORT) \
-	  $(RUNNER)/run-agent.sh --runtime $${RUNTIME:-manual} --benchmark $${BENCHMARK:-BE-001}
+	  $(RUNNER)/run-agent.sh \
+	    --runtime    $${RUNTIME:-manual} \
+	    --benchmark  $${BENCHMARK:-BE-001} \
+	    --variant    $${VARIANT:-baseline} \
+	    --experiment $${EXPERIMENT:-EXP-001} \
+	    $${CUSTOMIZATION:+--customization $$CUSTOMIZATION}
 
 # ---------------------------------------------------------------------------
 

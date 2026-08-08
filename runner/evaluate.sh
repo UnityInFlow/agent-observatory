@@ -31,21 +31,22 @@ done
 BENCH_DIR="$(find "$BENCHMARKS_REPO/tasks" -maxdepth 1 -name "${BENCHMARK_ID}-*" | head -1)"
 [[ -d "${BENCH_DIR:-}" ]] || { echo "evaluate: benchmark $BENCHMARK_ID not found" >&2; exit 2; }
 
+# shellcheck source=lib/evaluation-payload.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/evaluation-payload.sh"
+
 OUT="$(mktemp)"
+trap 'rm -f "$OUT"' EXIT
+
 "$BENCH_DIR/evaluator.sh" --baseline "$BASELINE" --service "$SERVICE" --out "$OUT" --run-id "$RUN_ID"
 EXIT=$?
 
+# mktemp leaves an empty file behind, so an evaluator that died before writing would
+# otherwise POST an empty body, get a 400 and still report success.
+[[ -s "$OUT" ]] || { echo "evaluate: evaluator produced no evaluation.json" >&2; exit 30; }
+
 curl -fsS -X POST "${API}/api/runs/${RUN_ID}/evaluation" -H 'Content-Type: application/json' \
-  -d "$(jq -c '{evaluatorVersion, completedAt, exitCode, passed, failureClass,
-      correctness: {buildPassed: .correctness.buildPassed, testsPassed: .correctness.testsPassed,
-                    acceptanceSuitePassed: .correctness.acceptanceSuitePassed,
-                    acceptanceCriteriaPassed: .correctness.acceptanceCriteriaPassed,
-                    acceptanceCriteriaTotal: .correctness.acceptanceCriteriaTotal},
-      quality: {unrelatedFilesChanged: .quality.unrelatedFilesChanged,
-                newDependencies: .quality.newDependencies,
-                staticAnalysisPassed: .quality.staticAnalysisPassed},
-      safety}' "$OUT")" >/dev/null
+  -d "$(jq -c "$EVALUATION_PAYLOAD_FILTER" "$OUT")" >/dev/null \
+  || { echo "evaluate: failed to persist the evaluation to ${API}" >&2; exit 30; }
 
 echo "evaluation recorded for ${RUN_ID} (exit ${EXIT})"
-rm -f "$OUT"
 exit "$EXIT"

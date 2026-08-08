@@ -75,12 +75,16 @@ run_id · prompt_id · commit_sha · file_path · user_email
 Use Tempo or PostgreSQL for individual run details. Reasonable dimensions are:
 
 ```text
-runtime=copilot|claude|codex
+runtime=github|anthropic|openai|manual     # the run's runtime.provider, not the product
 variant=baseline|instructions|skill|agent
 benchmark_category=bugfix|feature|review|migration
 result=pass|fail
 team=<small controlled set>
 ```
+
+The `runtime` label carries the **provider** (`github`, `anthropic`, `openai`), not the
+product name (`copilot-cli`, `claude-code`, `codex`). The product and version are on the
+run record in PostgreSQL, where they cost nothing in cardinality.
 
 Even team and user dimensions need a privacy and cardinality review. The purpose is to
 evaluate the **system**, not to rank developers.

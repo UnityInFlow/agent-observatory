@@ -9,6 +9,7 @@ WEB="${WEB:-http://localhost:5173}"
 GRAFANA="${GRAFANA:-http://localhost:3000}"
 PROM="${PROM:-http://localhost:9090}"
 TEMPO="${TEMPO:-http://localhost:3200}"
+OTLP="${OTLP:-http://localhost:4318}"
 
 PASS=0
 FAIL=0
@@ -42,7 +43,7 @@ check "Tempo ready"                        http "${TEMPO}/ready"
 check "Prometheus is ours"                 json_has "${PROM}/api/v1/targets" '[.data.activeTargets[].labels.job] | index("observatory-api") != null'
 check "Grafana healthy"                    http "${GRAFANA}/api/health"
 check "Web app is ours"                    grep_body "${WEB}/" "Agent Observatory"
-check "OTLP HTTP port open"                bash -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST http://localhost:4318/v1/traces -H "Content-Type: application/json" -d "{}" | grep -qE "200|202|400"'
+check "OTLP HTTP port open"                bash -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST '"${OTLP}"'/v1/traces -H "Content-Type: application/json" -d "{}" | grep -qE "200|202|400"'
 
 echo
 echo "Grafana provisioning"
@@ -65,8 +66,17 @@ check "unknown run returns 404"            bash -c 'test "$(curl -s -o /dev/null
 
 echo
 echo "Cardinality rule (§15)"
-check "no run_id label in metrics"         bash -c '! curl -fsS '"${API}"'/actuator/prometheus | grep -q "run_id="'
-check "no commit_sha label in metrics"     bash -c '! curl -fsS '"${API}"'/actuator/prometheus | grep -q "commit_sha="'
+# The body is captured and checked for emptiness first. `! curl ... | grep -q` would
+# report success whenever curl itself failed (grep on empty input exits 1, and `!`
+# inverts that) — so a down or port-shadowed API would "prove" the cardinality rule.
+metrics_lack() {  # pattern
+  local body
+  body="$(curl -fsS --max-time 10 "${API}/actuator/prometheus")" || return 1
+  [ -n "$body" ] || return 1
+  ! printf '%s' "$body" | grep -q "$1"
+}
+check "no run_id label in metrics"         metrics_lack "run_id="
+check "no commit_sha label in metrics"     metrics_lack "commit_sha="
 
 echo
 if [ "$FAIL" -eq 0 ]; then
