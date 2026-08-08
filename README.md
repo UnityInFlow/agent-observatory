@@ -23,6 +23,9 @@ into one score:
 
 ---
 
+**Picking this up after a break?** Read [`docs/STATE.md`](docs/STATE.md) first — where the
+project stands, what is blocked and what to do next.
+
 ## Quick start
 
 Prerequisites: Docker, JDK 21+, Node 20+.
