@@ -304,6 +304,43 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `compares cache tokens and cost, and stays silent where the runtime reports neither`() {
+        registerBenchmark("BE-FLOW-11")
+        // A Claude-shaped run: cache dwarfs input+output, and the vendor documents a cost.
+        mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-COST", "benchmarkId": "BE-FLOW-11", "variant": "baseline",
+                  "runtime": { "provider": "anthropic", "product": "claude-code", "model": "haiku" },
+                  "repository": { "commitSha": "abc123" },
+                  "behavior": { "modelCalls": 24, "toolCalls": 19 },
+                  "efficiency": {
+                    "durationMs": 133000, "inputTokens": 195, "outputTokens": 8604,
+                    "cachedTokens": 1025390, "estimatedCost": 0.212708
+                  }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated)
+
+        // A Copilot-shaped run: tokens, but no cache figure and no defensible cost.
+        createRun("BE-FLOW-11", "EXP-COST", "instructions", 15, 40_000)
+
+        mockMvc.perform(get("/api/benchmarks/BE-FLOW-11/comparison?groupBy=runtime"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.variants[0].variant").value("anthropic/haiku"))
+            .andExpect(jsonPath("$.variants[0].medianTokens").value(8799.0))
+            .andExpect(jsonPath("$.variants[0].medianCachedTokens").value(1025390.0))
+            .andExpect(jsonPath("$.variants[0].medianEstimatedCost").value(0.212708))
+            // §11: a runtime that reports no cost must produce no cost, never a zero that
+            // would read as "this variant was free".
+            .andExpect(jsonPath("$.variants[1].variant").value("github/gpt-x"))
+            .andExpect(jsonPath("$.variants[1].medianCachedTokens").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].medianEstimatedCost").doesNotExist())
+    }
+
+    @Test
     fun `counts an infrastructure failure as discarded, not as a failed run, in prometheus`() {
         registerBenchmark("BE-FLOW-10")
         evaluate(

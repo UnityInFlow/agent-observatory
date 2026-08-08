@@ -212,7 +212,16 @@ data class VariantComparison(
     val acceptanceRate: Double,
     val medianToolCalls: Double?,
     val medianModelCalls: Double?,
+    /** Billable input + output. Excludes cache, which is usually the larger number. */
     val medianTokens: Double?,
+    /**
+     * Cache reads and creations. On a Claude run these outnumber input+output ~100:1, and
+     * an instruction file's whole footprint is extra context — so a token comparison that
+     * omits them measures everything except the thing being varied.
+     */
+    val medianCachedTokens: Double?,
+    /** Vendor-reported cost in USD where the runtime documents one; null where it does not. */
+    val medianEstimatedCost: Double?,
     val medianDurationMs: Double?,
     val medianRetries: Double?,
     val meanUnrelatedFilesChanged: Double?,

@@ -95,6 +95,8 @@ export interface VariantComparison {
   medianToolCalls: number | null;
   medianModelCalls: number | null;
   medianTokens: number | null;
+  medianCachedTokens: number | null;
+  medianEstimatedCost: number | null;
   medianDurationMs: number | null;
   medianRetries: number | null;
   meanUnrelatedFilesChanged: number | null;
@@ -164,6 +166,10 @@ export const fmtTokens = (n: number | null): string => {
   if (n == null) return '—';
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 };
+
+/** Vendor-reported USD. Sub-cent runs are normal, so do not round them away to $0.00. */
+export const fmtCost = (v: number | null): string =>
+  v == null ? '—' : v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
 
 export const fmtPercent = (v: number | null): string =>
   v == null ? '—' : `${Math.round(v * 100)}%`;

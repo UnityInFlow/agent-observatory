@@ -118,6 +118,8 @@ class ComparisonService(
             medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
             medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
             medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
+            medianCachedTokens = median(measured.mapNotNull { it.efficiency.cachedTokens?.toDouble() }),
+            medianEstimatedCost = median(measured.mapNotNull { it.efficiency.estimatedCost?.toDouble() }),
             medianDurationMs = median(measured.mapNotNull { it.efficiency.durationMs?.toDouble() }),
             medianRetries = median(measured.map { it.behavior.retries.toDouble() }),
             meanUnrelatedFilesChanged =
