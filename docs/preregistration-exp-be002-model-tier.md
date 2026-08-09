@@ -91,3 +91,72 @@ is not "rejected". The registered rule is:
   **replication check**: if the fresh haiku arm does not land near the earlier arm's
   $0.1897 median and 8/10 pass, something about the rig is not stable, and that is worth
   more than the $2.
+
+---
+
+# Void — the sonnet arm measured the permission configuration, not the model
+
+Both arms completed. The result was **sonnet 30% pass against haiku 100%**, with sonnet
+costing 3.4× more. Taken at face value that says the stronger model is dramatically worse
+at the task, which is the kind of dramatic number this project has learned to disbelieve
+before publishing.
+
+It is an artifact. **Seven of the ten sonnet runs changed no production file at all.**
+
+| | haiku | sonnet |
+|---|---:|---:|
+| runs changing a production file | 10/10 | 3/10 |
+| runs ending by asking for build permission | 0/10 | 5/10 |
+| pass rate as recorded | 100% | 30% |
+
+The failing runs are bimodal and unmistakable: 11–12 tool calls and 61–136 s, against
+20–22 tool calls and 188–232 s for the passing ones, and every failure scores exactly 3/7.
+Their only changed file is `OrderControllerTest.kt`. The agent transcript ends:
+
+> *"I need explicit approval to run the Maven build. Could you approve running `./mvnw test`
+> (or grant Bash permission), so I can verify the tests?"*
+
+The runner launches the agent with `--permission-mode acceptEdits`, which auto-approves
+file edits but not shell commands, in a headless `-p` session where there is nobody to ask.
+Sonnet stops and requests approval. Haiku does not ask and proceeds. The evaluator then
+records a run that never implemented the feature as **F05, incorrect code**.
+
+## This is harness bug #7, and it is bug #2 again
+
+> *2. An exhausted Copilot quota recorded as **F03, incorrect code**.*
+
+Same shape: an environmental block recorded as a capability failure. Bug #2 was noticed
+because a quota error is obviously not the agent's fault. This one is subtler, because
+"the model produced a failing implementation" is exactly what a model comparison expects to
+see, and it arrived pointing the way a reviewer might already suspect a cheaper model would
+win.
+
+Direction: **pessimistic**, like bugs 1–4. It makes the more cautious agent look
+incompetent.
+
+## What it invalidates
+
+- **`EXP-BE002-MODEL-TIER` is void.** No verdict is drawn from it. The cost figure
+  (+244%, p < .001) is *probably* sound in direction, since token pricing is real — but it
+  is measured across arms where one arm mostly did not do the work, so it is not reportable
+  either.
+- **Not `EXP-BE002-AGENTSMD-V3`.** Both of its arms were haiku, and haiku asked for build
+  permission in 0 of 20 runs. That result stands.
+- **Every future cross-model or cross-runtime comparison**, until this is fixed. The
+  instrument systematically penalises agents that are more conservative about permissions,
+  which is a property of the harness, not of the agent's engineering ability.
+
+This last point bears directly on [ADR-001](adr-001-defer-codex-adapter.md): a Codex
+adapter would have walked straight into it, since approval behaviour is one of the things
+Codex models explicitly.
+
+## What has to happen before this experiment is re-run
+
+The agent must be able to run the project's build non-interactively, or a run that is
+blocked on permission must be classified as infrastructure (F13/F15) rather than as
+incorrect code. Preferably both — the second is the safety net for the first, because a
+permission block that is silently converted into a passing-looking dataset is how this
+class of bug survives.
+
+Either fix is a change to what the harness allows an agent to do, which is a deliberate
+decision and not a detail to slip into a re-run.

@@ -251,7 +251,26 @@ case "$RUNTIME" in
     fi
     ;;
   claude)
-    CLAUDE_ARGS=(--permission-mode acceptEdits)
+    # Latitude must be explicit and equal to Copilot's, or the harness measures its own
+    # configuration. It did: with only `--permission-mode acceptEdits`, edits were
+    # auto-approved but the build was not, and the two models resolved that ambiguity
+    # differently — haiku called the tool, sonnet stopped and asked a human who was not
+    # there. Seven of ten sonnet runs never implemented anything and were recorded as
+    # "incorrect code". permissionDenials was 0 throughout: nothing was refused, so no
+    # telemetry showed it.
+    #
+    # The task tells the agent to run `./mvnw test` before finishing. An agent that cannot
+    # do what the task instructs is not being measured on the task.
+    #
+    # --strict-mcp-config: without it the agent inherits whatever MCP servers the operator
+    # has configured at user scope, so the "plain baseline" varies by machine and its tool
+    # schemas inflate the context of every request — which lands on cost, the primary
+    # metric. A benchmark run gets no MCP servers unless a customization supplies them.
+    CLAUDE_ARGS=(
+      --permission-mode acceptEdits
+      --strict-mcp-config
+      --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
+    )
     [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
     if [[ "$INTERACTIVE" == true ]]; then
       ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" ) \

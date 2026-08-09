@@ -196,6 +196,13 @@ def validate(runs, arms, discarded, unevaluated, unexpected, expected_n, vary=()
             n = sum(1 for r, _ in rows if metrics(r)[key] is not None)
             if rows and n != len(rows):
                 problems.append(f"arm '{arm}' has {len(rows) - n} run(s) missing {key} telemetry")
+    for arm, rows in arms.items():
+        unattempted = sum(1 for _, ev in rows if ev.get("taskAttempted") is False)
+        if unattempted:
+            problems.append(
+                f"arm '{arm}' has {unattempted} run(s) that changed no production file — "
+                "the task was not attempted, so those runs are not evidence about the code"
+            )
     return problems
 
 

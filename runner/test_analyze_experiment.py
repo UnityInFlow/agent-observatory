@@ -257,3 +257,36 @@ class VariedDimension(unittest.TestCase):
                 + [run("instructions", model="sonnet", sha="def") for _ in range(2)])
         problems = self.validate(runs, vary=("runtime.model",))
         self.assertTrue(any("repository.commitSha" in p for p in problems))
+
+
+class UnattemptedRuns(unittest.TestCase):
+    """A run that changed no production file is not evidence about the code."""
+
+    def validate(self, runs, n=2):
+        arms, discarded, unevaluated, unexpected = ae.partition(runs, "baseline", "instructions")
+        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n)
+
+    def test_unattempted_runs_block_the_analysis(self):
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        problems = self.validate(runs)
+        self.assertTrue(any("changed no production file" in p for p in problems))
+
+    def test_attempted_runs_are_fine(self):
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        for r in runs:
+            r["evaluation"]["taskAttempted"] = True
+        self.assertEqual(self.validate(runs), [])
+
+    def test_absent_field_is_not_treated_as_unattempted(self):
+        """Runs recorded before the evaluator emitted the field must not be condemned."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        self.assertEqual(self.validate(runs), [])
+
+    def test_an_unattempted_run_is_still_counted_not_discarded(self):
+        """It stays in the arm. Silently dropping it would flatter the agent."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        arms, discarded, _, _ = ae.partition(runs, "baseline", "instructions")
+        self.assertEqual(len(arms["instructions"]), 2)
+        self.assertEqual(discarded["instructions"], 0)
