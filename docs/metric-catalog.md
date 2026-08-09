@@ -64,6 +64,10 @@ Start small. This is the first catalog, not the final one.
 | `observatory_run_tokens` | summary | ″ |
 | `observatory_run_acceptance_rate` | summary | ″ |
 
+Runs classified F13/F15 are counted in `observatory_runs_total` with `result=discarded`
+and are recorded in **none** of the summaries: their behaviour is zeroed, not small, and
+feeding those zeros into a percentile invents a run nobody made.
+
 ### Cardinality rule
 
 **Never** put these into Prometheus labels:
@@ -78,7 +82,7 @@ Use Tempo or PostgreSQL for individual run details. Reasonable dimensions are:
 runtime=github|anthropic|openai|manual     # the run's runtime.provider, not the product
 variant=baseline|instructions|skill|agent
 benchmark_category=bugfix|feature|review|migration
-result=pass|fail
+result=pass|fail|discarded                 # discarded = F13/F15 infrastructure failure
 team=<small controlled set>
 ```
 
@@ -109,6 +113,11 @@ F06 insufficient tests            F14 safety/policy violation
 F07 unnecessary changes           F15 evaluator/infrastructure failure
 F08 hallucinated API/dependency
 ```
+
+**F13 and F15 are not agent failures.** They blame the harness or the environment, so the
+comparison endpoint and the Prometheus summaries exclude them — see *Reading a comparison
+honestly* below. Classifying a quota exhaustion as F03 instead would silently turn a
+billing problem into evidence against a variant; that mistake has already been made once.
 
 ---
 
@@ -145,3 +154,36 @@ Agent runs are non-deterministic: one successful run proves very little. The min
 learning sample is **5 runs per variant**, and 10 is a better first comparison. The
 comparison endpoint returns an explicit `warning` when a variant is below that threshold,
 and the Compare page renders it.
+
+**Not every recorded run measures the variant.** F13 (timeout/rate limit) and F15
+(evaluator/infrastructure failure) blame the harness or the environment: an exhausted
+quota measures the billing account, and a broken evaluator measures the instrument. The
+comparison endpoint excludes those runs from `passRate`, `acceptanceRate` and every
+median, and — the part that actually bit us — from the count checked against the 5-run
+minimum. A run that never executed must not make a variant look worse, nor make an
+under-powered arm look adequately sampled.
+
+### Tokens are not one number
+
+`medianTokens` is **input + output only**. On a Claude/haiku BE-002 run that is 8.8k
+tokens — beside **1.03M** cache tokens, so the headline figure sees under 1% of what the
+model actually processed. The comparison therefore reports `medianCacheTokens` and
+`medianEstimatedCost` alongside it.
+
+Cache is split in two, because reads and creations are priced differently and move for
+different reasons: `medianCacheTokens` is reads + creations, and
+`medianCacheCreationTokens` is the written portion on its own. A newly installed
+`AGENTS.md` is *written* to the cache on the first request of a run and only read
+afterwards, so creations are the component a B0/B1 comparison moves most directly —
+reporting only reads would still hide it.
+
+This matters specifically for instruction-file experiments: an `AGENTS.md` adds context
+to every request, and with prompt caching that lands almost entirely in cache creation
+and reads. Comparing B0 with B1 on input+output alone would exclude the cost of the one
+thing being varied. Cost is null where the runtime documents none — a variant that
+reports nothing must never render as free.
+
+They are not hidden either: each variant reports `infrastructureFailures`, shown on the
+Compare page as the *discarded (F13/F15)* row. `runs` is therefore the number of
+**measuring** runs, while `totalRuns` still counts everything recorded. Every other
+failure class stays in the aggregates — F03 is a result, not an accident.

@@ -131,8 +131,17 @@ class EfficiencyMetrics(
     @Column(name = "output_tokens")
     var outputTokens: Long? = null,
 
+    /** Cache *reads* — context replayed from an existing prefix. */
     @Column(name = "cached_tokens")
     var cachedTokens: Long? = null,
+
+    /**
+     * Cache *creations* — context written to the cache for the first time. Priced
+     * differently from reads, and where a newly added instruction file lands on the first
+     * request of a run, so it is kept as its own number rather than folded into [cachedTokens].
+     */
+    @Column(name = "cache_creation_tokens")
+    var cacheCreationTokens: Long? = null,
 
     @Column(name = "estimated_cost")
     var estimatedCost: BigDecimal? = null,
@@ -260,6 +269,13 @@ class Evaluation(
     fun acceptanceRate(): Double =
         if (acceptanceCriteriaTotal == 0) 0.0
         else acceptanceCriteriaPassed.toDouble() / acceptanceCriteriaTotal
+
+    /**
+     * The harness or the environment failed, not the agent — see [FailureTaxonomy].
+     * Such a run is recorded and stays visible, but measures nothing about the variant.
+     */
+    fun isInfrastructureFailure(): Boolean =
+        !passed && FailureTaxonomy.isInfrastructure(failureClass)
 }
 
 @Entity

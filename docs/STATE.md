@@ -33,12 +33,10 @@ Two honest caveats on BE-002, both written up in
 
 ## Recommended next sequence
 
-1. **Merge the open PRs** — [#21](https://github.com/UnityInFlow/agent-observatory/pull/21)
-   (F13/F15 excluded from aggregates), [#22](https://github.com/UnityInFlow/agent-observatory/pull/22)
-   (cache tokens + cost in the comparison, stacked on #21),
-   [benchmarks#7](https://github.com/UnityInFlow/agent-observatory-benchmarks/pull/7) (BE-002).
-   Then **rebuild the API image** — a running container from before #21 still counts
-   F13/F15 toward aggregates.
+1. ~~Merge the instrument fixes~~ **Done** — [#21](https://github.com/UnityInFlow/agent-observatory/pull/21)
+   (F13/F15 excluded from aggregates) and [#22](https://github.com/UnityInFlow/agent-observatory/pull/22)
+   (cache tokens + cost) are merged. **Rebuild the API image before measuring anything** —
+   a container started before #21 still counts F13/F15 toward aggregates.
 2. **Run B0 vs B1 on BE-002 at 10 runs per variant** with `experiments/agents-md-v1/`
    **unchanged**. It already forbids exactly the behaviour that failed run 3, and it was
    written before BE-002 existed — instructions that pre-date the benchmark are much

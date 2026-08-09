@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   api,
+  fmtCost,
   fmtDuration,
   fmtNumber,
   fmtPercent,
@@ -23,12 +24,17 @@ interface MetricRow {
 
 const ROWS: MetricRow[] = [
   // Sample size is context, not a score — more runs is not "better".
-  { label: 'runs', value: (v) => v.runs, format: (n) => fmtNumber(n, 0), better: 'neutral' },
+  { label: 'measuring runs', value: (v) => v.runs, format: (n) => fmtNumber(n, 0), better: 'neutral' },
   { label: 'acceptance', value: (v) => v.acceptanceRate, format: fmtPercent, better: 'higher' },
   { label: 'pass rate', value: (v) => v.passRate, format: fmtPercent, better: 'higher' },
   { label: 'tool calls (median)', value: (v) => v.medianToolCalls, format: (n) => fmtNumber(n), better: 'lower' },
   { label: 'model calls (median)', value: (v) => v.medianModelCalls, format: (n) => fmtNumber(n), better: 'lower' },
   { label: 'tokens (median)', value: (v) => v.medianTokens, format: fmtTokens, better: 'lower' },
+  // Cache is where an instruction file's footprint actually lands — omitting it would
+  // hide the cost of the very thing a customization experiment varies.
+  { label: 'cache tokens (median)', value: (v) => v.medianCacheTokens, format: fmtTokens, better: 'lower' },
+  { label: '— of which written (median)', value: (v) => v.medianCacheCreationTokens, format: fmtTokens, better: 'lower' },
+  { label: 'cost (median)', value: (v) => v.medianEstimatedCost, format: fmtCost, better: 'lower' },
   { label: 'duration (median)', value: (v) => v.medianDurationMs, format: fmtDuration, better: 'lower' },
   { label: 'retries (median)', value: (v) => v.medianRetries, format: (n) => fmtNumber(n), better: 'lower' },
   { label: 'unwanted files (mean)', value: (v) => v.meanUnrelatedFilesChanged, format: (n) => fmtNumber(n), better: 'lower' },
@@ -119,6 +125,14 @@ export default function ComparePage() {
                   </tr>
                 );
               })}
+              <tr>
+                <td>discarded (F13/F15)</td>
+                {data.variants.map((v) => (
+                  <td key={v.variant} className="num muted">
+                    {v.infrastructureFailures === 0 ? '—' : v.infrastructureFailures}
+                  </td>
+                ))}
+              </tr>
               <tr>
                 <td>failure classes</td>
                 {data.variants.map((v) => (

@@ -22,6 +22,7 @@ export interface Efficiency {
   inputTokens: number | null;
   outputTokens: number | null;
   cachedTokens: number | null;
+  cacheCreationTokens: number | null;
   estimatedCost: number | null;
 }
 
@@ -39,6 +40,8 @@ export interface Evaluation {
   exitCode: number;
   passed: boolean;
   failureClass: string | null;
+  /** F13/F15 — harness or environment, not the agent. Derived server-side (#19). */
+  infrastructureFailure: boolean;
   buildPassed: boolean;
   testsPassed: boolean;
   acceptanceCriteriaPassed: number;
@@ -85,13 +88,20 @@ export interface Run {
 
 export interface VariantComparison {
   variant: string;
+  /** Runs that measure the variant. Infrastructure failures are excluded from every number here. */
   runs: number;
+  /** F13/F15 runs discarded as harness or environment failures — reported, never averaged. */
+  infrastructureFailures: number;
   passed: number;
-  passRate: number;
-  acceptanceRate: number;
+  /** Null when the arm measured nothing at all — render as em dash, never as 0%. */
+  passRate: number | null;
+  acceptanceRate: number | null;
   medianToolCalls: number | null;
   medianModelCalls: number | null;
   medianTokens: number | null;
+  medianCacheTokens: number | null;
+  medianCacheCreationTokens: number | null;
+  medianEstimatedCost: number | null;
   medianDurationMs: number | null;
   medianRetries: number | null;
   meanUnrelatedFilesChanged: number | null;
@@ -161,6 +171,10 @@ export const fmtTokens = (n: number | null): string => {
   if (n == null) return '—';
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 };
+
+/** Vendor-reported USD. Sub-cent runs are normal, so do not round them away to $0.00. */
+export const fmtCost = (v: number | null): string =>
+  v == null ? '—' : v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
 
 export const fmtPercent = (v: number | null): string =>
   v == null ? '—' : `${Math.round(v * 100)}%`;

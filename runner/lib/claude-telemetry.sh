@@ -77,7 +77,11 @@ jq -s -c --arg runId "$RUN_ID" '
       efficiency: {
         inputTokens:  ($api | map(num("input_tokens"))      | add // 0),
         outputTokens: ($api | map(num("output_tokens"))     | add // 0),
-        cachedTokens: ($api | map(num("cache_read_tokens")) | add // 0),
+        cachedTokens:        ($api | map(num("cache_read_tokens"))     | add // 0),
+        # Kept apart from reads: a freshly installed AGENTS.md is *written* to the cache on
+        # the first request of a run and only read afterwards, so folding the two together
+        # would blur the one component a B0/B1 comparison moves most directly.
+        cacheCreationTokens: ($api | map(num("cache_creation_tokens")) | add // 0),
         # Unlike Copilot, Claude documents this in USD, so it is defensible as a cost.
         estimatedCost: (($api | map(num("cost_usd")) | add // 0) as $c
                         | if $c > 0 then ($c * 1000000 | round) / 1000000 else null end)

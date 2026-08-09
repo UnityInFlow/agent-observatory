@@ -203,9 +203,12 @@ conclusion is not "AGENTS.md does not help" — it is "this benchmark cannot tel
 - The instructions arm has **4 valid runs, below the 5-run minimum of §20**. A fifth run
   aborted with `You have no quota` and is recorded as **F13** (rate limit), not F03. It is
   excluded from every number above.
-- `ComparisonService` still counts F13 runs toward its minimum-sample warning, so the API
-  reported no warning for an arm that is in fact under-powered. The analysis above was
-  computed with F13 filtered out; the API should do that itself.
+- `ComparisonService` used to count that F13 run toward its minimum-sample warning, so the
+  API reported no warning for an arm that is in fact under-powered, and dragged its pass
+  rate to 80% for a reason unrelated to `AGENTS.md`. The analysis above was computed by
+  hand with F13 filtered out. **Fixed in #19**: F13/F15 runs are now excluded from every
+  aggregate and from the 5-run minimum, and reported as `infrastructureFailures`. Re-run
+  the comparison and the API produces the corrected numbers itself.
 - Two harness bugs were found *by this experiment* and fixed before the numbers above
   were taken; the first set of treatment runs was discarded. See the PR for detail.
 

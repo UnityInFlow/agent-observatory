@@ -77,10 +77,14 @@ class ComparisonService(
             .sortedBy { it.variant }
 
         val thin = groups.filter { it.runs < minimumRunsPerVariant }.map { it.variant }
+        val discarded = groups.sumOf { it.infrastructureFailures }
         val warning = if (thin.isEmpty()) null else
             "${thin.joinToString(", ")} ${if (thin.size == 1) "has" else "have"} fewer than " +
-                "$minimumRunsPerVariant runs. Agent runs are non-deterministic — " +
-                "one successful run proves very little."
+                "$minimumRunsPerVariant measuring runs. Agent runs are non-deterministic — " +
+                "one successful run proves very little." +
+                if (discarded == 0) "" else
+                    " $discarded ${if (discarded == 1) "run is" else "runs are"} excluded as " +
+                        "infrastructure failures (F13/F15) and do not count toward the minimum."
 
         return ComparisonResponse(
             experimentId = experiment?.id,
@@ -96,20 +100,41 @@ class ComparisonService(
         variantRuns: List<AgentRun>,
         evaluationsByRun: Map<UUID, Evaluation>,
     ): VariantComparison {
-        val evaluated = variantRuns.mapNotNull { evaluationsByRun[it.id] }
+        // #19: a run that aborted on a quota or a broken evaluator measures the harness,
+        // not the variant. It is reported, never averaged, and never counted as sample.
+        val (infrastructure, measured) = variantRuns.partition {
+            evaluationsByRun[it.id]?.isInfrastructureFailure() == true
+        }
+        val evaluated = measured.mapNotNull { evaluationsByRun[it.id] }
         val passed = evaluated.count { it.passed }
 
         return VariantComparison(
             variant = variant,
-            runs = variantRuns.size,
+            runs = measured.size,
+            infrastructureFailures = infrastructure.size,
             passed = passed,
-            passRate = if (evaluated.isEmpty()) 0.0 else passed.toDouble() / evaluated.size,
-            acceptanceRate = if (evaluated.isEmpty()) 0.0 else evaluated.map { it.acceptanceRate() }.average(),
-            medianToolCalls = median(variantRuns.map { it.behavior.toolCalls.toDouble() }),
-            medianModelCalls = median(variantRuns.map { it.behavior.modelCalls.toDouble() }),
-            medianTokens = median(variantRuns.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
-            medianDurationMs = median(variantRuns.mapNotNull { it.efficiency.durationMs?.toDouble() }),
-            medianRetries = median(variantRuns.map { it.behavior.retries.toDouble() }),
+            // Null, not 0.0: an arm whose every run was discarded measured *nothing*, and
+            // a zero would render as the worst possible result and hand the win to the
+            // other arm — the same one-directional bias this change exists to remove.
+            passRate = if (evaluated.isEmpty()) null else passed.toDouble() / evaluated.size,
+            acceptanceRate = if (evaluated.isEmpty()) null else evaluated.map { it.acceptanceRate() }.average(),
+            medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
+            medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
+            medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
+            // Reads + creations: the whole cache footprint, which on a Claude run dwarfs
+            // input+output by two orders of magnitude.
+            medianCacheTokens = median(
+                measured.mapNotNull { e ->
+                    val read = e.efficiency.cachedTokens
+                    val created = e.efficiency.cacheCreationTokens
+                    if (read == null && created == null) null else ((read ?: 0L) + (created ?: 0L)).toDouble()
+                },
+            ),
+            medianCacheCreationTokens =
+                median(measured.mapNotNull { it.efficiency.cacheCreationTokens?.toDouble() }),
+            medianEstimatedCost = median(measured.mapNotNull { it.efficiency.estimatedCost?.toDouble() }),
+            medianDurationMs = median(measured.mapNotNull { it.efficiency.durationMs?.toDouble() }),
+            medianRetries = median(measured.map { it.behavior.retries.toDouble() }),
             meanUnrelatedFilesChanged =
                 if (evaluated.isEmpty()) null else evaluated.map { it.unrelatedFilesChanged.toDouble() }.average(),
             // §23: a taxonomy is more useful than a generic FAIL counter.
