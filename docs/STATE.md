@@ -2,42 +2,41 @@
 
 Handoff note. Read this first when picking the work back up.
 
-## Status: leak closed for real, and the first experiment has concluded
+## Status: instrument works, no experiment has ever produced a valid result
 
-Chapter 00 M0–M10 is built, tested and merged. `make up && make demo` works. The
-instrument was hardened substantially on 2026-08-09 (six PRs, below).
+Chapter 00 M0–M10 is built, tested and merged. `make up && make demo` works. The instrument
+was hardened substantially on 2026-08-09.
 
-**One experiment has now concluded**, after two were voided for the same leak at different
-depths:
+**Four experiments attempted. All four void.**
 
-- `EXP-BE002-AGENTSMD` — void after 3 runs. Answer key in the agent's **working tree**.
-- `EXP-BE002-AGENTSMD-V2` — void after 4 runs. #28 removed it from the working tree and
-  left it in the agent's **git history**, where `git show HEAD^:…` returned the model
-  solution and `git show --stat HEAD` listed the acceptance-suite filenames.
+| experiment | why it is void |
+|---|---|
+| `EXP-BE002-AGENTSMD` | answer key in the agent's **working tree** |
+| `EXP-BE002-AGENTSMD-V2` | #28 removed it from the tree, left it in **git history** |
+| `EXP-BE002-AGENTSMD-V3` | **the treatment was never loaded** — see below |
+| `EXP-BE002-MODEL-TIER` | permission confound, and its registration was committed after nine runs had started |
 
-`EXP-BE002-AGENTSMD-V3` is the live one, against a tree the runner builds with `git
-archive` of an allowlist into a fresh `git init` — one commit, no parent object store,
-**asserted on every run** rather than trusted.
+### V3 is void because Claude Code does not read `AGENTS.md`
 
-**Both arms are complete and the experiment has concluded: `INCONCLUSIVE`.** The first
-result this project has ever produced.
+This one was written up as a concluded result — `INCONCLUSIVE`, cost −12.8% at p = .04, pass
+rate 80% → 100%. **The comparison was baseline against baseline.**
 
-| | B0 baseline | B1 instructions |
-|---|---:|---:|
-| median cost (primary) | $0.1897 | **$0.1654** (−12.8%, p=0.04) |
-| median tool calls | 19 | 15 |
-| pass rate | 80% | **100%** |
-| F07 scope / F02 contract | 2 / 0 | **0 / 0** |
+`agents-md-v1` is a Copilot-native customization. It was run against Claude, which loads
+`CLAUDE.md`. Verified by controlled test: an identical file named `CLAUDE.md` is read, and
+`AGENTS.md` is not. The runner installed the file, hashed it into `instructionsHash`, and
+all ten B1 runs carried the same hash — so it looked perfectly applied. It was applied to
+disk and never read.
 
-Every metric moved the same way and none of it clears the 24% bar registered in Amendment 2
-before the B1 arm existed. `KEEP` requires the shift *and* p < .05; it has the p and not the
-shift. Full write-up in
-[`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md).
+That also resolves the replication anomaly logged below as unexplained: two "different"
+haiku arms four hours apart differed by 8/10 vs 10/10 and 19 vs 14 tool calls, **the same
+magnitude as the "effect"** — because both were in fact identical configurations.
 
-**One of the four predictions held.** The interesting one — that BE-001's
-`jakarta.validation` convention would push the agent off BE-002's error envelope and
-produce F02s — was specific, mechanistic and **wrong**: zero F02 in either arm. Cost was
-predicted to rise; it fell, and so did cache creation.
+Found in review of PR #33, not by two audit passes. The lesson is in "The thing most worth
+remembering" at the bottom.
+
+**The upside:** the AGENTS.md question has never actually been tested. Rename the file to
+`CLAUDE.md` and its four predictions are live and untouched — a ~$4 experiment that would be
+this project's first real result.
 
 ### Resuming mid-experiment
 
@@ -145,13 +144,16 @@ different runs; treat it as suggestive, not as a measured effect.
    Cost 19% → **24%**, tool calls 30% → **36%**, cache 36% → **32%**, duration
    unusable at **175%**. The clean task is more variable than the contaminated pilot
    implied, so the experiment is less sensitive than it was sold as.
-5. ~~Run the B1 arm and score it.~~ **Done** — `INCONCLUSIVE`, written up in the
-   registration. 10 + 10, one `instructionsHash` across all B1 runs, `AGENTS.md` never
-   edited.
-6. **Commit and PR the working tree — this is the next action.** Nothing else is blocked
-   on anything. Suggested split: the leak fix as one PR, the MDE derivation + Amendment 2
-   + the result write-up as another.
-7. **Then stop fixing the instrument.** Seven PRs' worth of hardening on 2026-08-09 was
+5. ~~Run the B1 arm and score it.~~ **Void** — the B1 arm installed `AGENTS.md`, which
+   Claude Code does not read. Both arms were baseline. The `instructionsHash` matched
+   across all ten runs and certified a treatment that never reached the model.
+6. ~~Commit and PR the working tree.~~ **Done** — #30, #32, #33, #44 and benchmarks#8.
+7. **Run the experiment for real — this is the next action.** `agents-md-v1` renamed to
+   `CLAUDE.md`, as `EXP-BE002-CLAUDEMD`. The four predictions in the registration have
+   never been tested and stand unmodified; §32 still forbids editing the instruction file
+   in response to results. Budget ~$4 and ~40 minutes. Do not launch before the runtime
+   guard (below) is in place, or the same failure is available again.
+8. **Then stop fixing the instrument.** Seven PRs' worth of hardening on 2026-08-09 was
    defensible and none of it was a result. Instrument work is unbounded and always more
    satisfying than an experiment that may conclude "no effect". Publish with the caveats
    that remain.

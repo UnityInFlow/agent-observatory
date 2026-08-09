@@ -189,6 +189,43 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
 
   echo "  customization installed from ${CUSTOMIZATION_DIR}"
   echo "  evaluation baseline moved to ${EVAL_BASELINE_SHA:0:12} (setup commit)"
+
+  # --- the treatment must be a file this runtime actually reads --------------
+  # EXP-BE002-AGENTSMD-V3 installed AGENTS.md and ran it against Claude Code, which reads
+  # CLAUDE.md. The file was copied, committed, hashed, and identical across all ten runs of
+  # the treatment arm — so every check the harness had said the treatment was applied, and
+  # the comparison was baseline against baseline. It was written up as the project's first
+  # result before anyone noticed.
+  #
+  # Installing a file proves nothing about whether a model reads it. This asserts the
+  # second thing, which is the only one the experiment depends on. Verified by controlled
+  # test rather than from documentation: an identical instruction file is honoured under
+  # one name and ignored under the other.
+  #
+  # A customization with no instruction file at all is allowed — skills, hooks and MCP
+  # config are legitimate treatments. What is refused is an instruction file aimed at the
+  # wrong runtime, which is indistinguishable from a working experiment once it is running.
+  case "$RUNTIME" in
+    claude)  INSTRUCTION_FILE="CLAUDE.md";  FOREIGN_INSTRUCTIONS=(AGENTS.md .github/copilot-instructions.md) ;;
+    copilot) INSTRUCTION_FILE="AGENTS.md";  FOREIGN_INSTRUCTIONS=(CLAUDE.md) ;;
+    codex)   INSTRUCTION_FILE="AGENTS.md";  FOREIGN_INSTRUCTIONS=(CLAUDE.md) ;;
+    *)       INSTRUCTION_FILE="";           FOREIGN_INSTRUCTIONS=() ;;
+  esac
+
+  if [[ -n "$INSTRUCTION_FILE" ]]; then
+    for foreign in "${FOREIGN_INSTRUCTIONS[@]}"; do
+      if [[ -f "$WORKTREE/$foreign" && ! -f "$WORKTREE/$INSTRUCTION_FILE" ]]; then
+        die "customization installs '${foreign}', which runtime '${RUNTIME}' does not read.
+    It reads '${INSTRUCTION_FILE}'. The run would record an instructionsHash for a
+    treatment the model never sees, and the arm would silently be a second baseline.
+    Rename the file in ${CUSTOMIZATION_DIR}, or run this customization on the runtime
+    it was written for."
+      fi
+    done
+    if [[ -f "$WORKTREE/$INSTRUCTION_FILE" ]]; then
+      echo "  instruction file ${INSTRUCTION_FILE} present — ${RUNTIME} reads this"
+    fi
+  fi
 fi
 
 hash_of() {
@@ -196,8 +233,18 @@ hash_of() {
   [[ -f "$path" ]] || { echo "null"; return; }
   printf '"sha256:%s"' "$(shasum -a 256 "$path" | cut -c1-32)"
 }
+# Hash the file this runtime actually reads, not a fixed filename. Hashing AGENTS.md on a
+# Claude run produced a stable, real-looking instructionsHash across a whole treatment arm
+# for a file the model never opened, and that hash was then cited as evidence the treatment
+# was applied consistently. A hash of the wrong file is worse than no hash: it is a
+# provenance claim about something that had no effect.
+case "$RUNTIME" in
+  claude)  RUNTIME_INSTRUCTIONS="CLAUDE.md" ;;
+  copilot|codex) RUNTIME_INSTRUCTIONS="AGENTS.md" ;;
+  *)       RUNTIME_INSTRUCTIONS="AGENTS.md" ;;
+esac
 CUSTOMIZATION=$(jq -nc \
-  --argjson instructions "$(hash_of AGENTS.md)" \
+  --argjson instructions "$(hash_of "$RUNTIME_INSTRUCTIONS")" \
   --argjson skills "$(hash_of .github/skills.md)" \
   --argjson agent "$(hash_of .github/copilot-instructions.md)" \
   '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent}')
