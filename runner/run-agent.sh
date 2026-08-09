@@ -93,6 +93,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# --- 2b. strip the worktree to what a developer would actually receive ------
+# The benchmarks repository holds the graded acceptance suites, a known-good fixture and a
+# README describing each task's trap. All of it was landing in the tree handed to the
+# agent, and at least one run demonstrably read it: its summary named BE002FunctionalTest
+# and BE002ContractTest, filenames that exist nowhere else. That makes every affected run
+# a measurement of "can you find the answer file".
+#
+# An allowlist, not a denylist: a denylist rots silently the first time a benchmark adds a
+# file, and this class of leak flatters the agent, so nobody investigates it.
+#
+# Removing them is safe for evaluation. The evaluator runs from BENCH_DIR in the *main*
+# repository and copies its acceptance suites into the service at evaluation time; it
+# never reads them from the worktree.
+WORKTREE_KEEP=(sample-service .gitignore)
+strip_worktree() {
+  local entry base keep
+  for entry in "$WORKTREE"/* "$WORKTREE"/.[!.]*; do
+    [[ -e "$entry" ]] || continue
+    base="$(basename "$entry")"
+    [[ "$base" == ".git" ]] && continue
+    keep=false
+    for k in "${WORKTREE_KEEP[@]}"; do [[ "$base" == "$k" ]] && keep=true && break; done
+    [[ "$keep" == true ]] || rm -rf "$entry"
+  done
+}
+strip_worktree
+[[ -d "$WORKTREE/sample-service" ]] || die "strip removed the service under test"
+
+# Committed, not just deleted — otherwise every run's diff opens with the harness deleting
+# half the repository and the scope guard blames the agent for it. Same reason the
+# customization overlay below is committed before the agent starts.
+git -C "$WORKTREE" add -A >/dev/null 2>&1
+git -C "$WORKTREE" -c user.email=runner@observatory -c user.name=observatory-runner \
+    commit -qm "experiment setup: strip benchmark authoring material from the worktree" \
+  || die "failed to commit the stripped worktree"
+STRIPPED_SHA="$(git -C "$WORKTREE" rev-parse HEAD)"
+
 echo "=============================================================="
 echo " run        ${RUN_ID}"
 echo " benchmark  ${BENCHMARK_ID}   variant ${VARIANT}   experiment ${EXPERIMENT}"
@@ -121,10 +158,10 @@ fi
 RUNTIME_VERSION="${RUNTIME_VERSION:-unknown}"
 
 # --- 5. install and hash the customization (§12) ----------------------------
-# The commit the *evaluation* measures against. It is the benchmark baseline for a plain
-# run, but for a customized run it is a setup commit that already contains the
-# customization files.
-EVAL_BASELINE_SHA="$BASELINE_SHA"
+# The commit the *evaluation* measures against — always a setup commit, never the raw
+# benchmark HEAD: the worktree has already had the authoring material stripped out of it,
+# and a customized run adds the overlay on top. Both are starting state, not agent output.
+EVAL_BASELINE_SHA="$STRIPPED_SHA"
 
 if [[ -n "$CUSTOMIZATION_DIR" ]]; then
   [[ -d "$CUSTOMIZATION_DIR" ]] || die "customization directory not found: $CUSTOMIZATION_DIR"
