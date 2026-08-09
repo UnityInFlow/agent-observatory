@@ -286,6 +286,16 @@ occur. §32 forbids the second; this is the first.
   | tool calls | 21.8 | 4.97 | 6.6 (**30%**) |
   | cache tokens | 1.04 M | 284 k | 374 k (**36%**) |
 
+  > **Superseded — this table is void.** It was estimated from runs that could read the
+  > benchmark's answer key, and it used `d = 1.31` where the rank-test correction gives
+  > 1.28. The table that governs is Amendment 2 of
+  > [`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md),
+  > derived from a clean 10-run arm: cost **24%**, tool calls **36%**, cache tokens
+  > **32%**, duration unusable at **175%**. It is left in place rather than edited because
+  > the reasoning below is what the numbers were used for, and rewriting history would
+  > hide that the contaminated estimate made the experiment look better powered than it
+  > was. Read the paragraph that follows with the corrected figures.
+
   So a 10 + 10 comparison can only resolve a *large* effect: roughly a fifth off cost or a
   third off tool calls. An instruction file plausibly moves things by less than that.
 
