@@ -226,6 +226,12 @@ def main(argv=None):
         help="a fixed dimension this experiment changes on purpose, e.g. --vary runtime.model. "
              "Must separate the arms cleanly: one value per arm, different between them.",
     )
+    ap.add_argument(
+        "--no-verdict",
+        action="store_true",
+        help="print the metric table and failure mix, and emit NO verdict. Required for any "
+             "experiment whose registered decision rule is not the one coded here.",
+    )
     args = ap.parse_args(argv)
 
     runs = [r for r in fetch(f"{args.api}/api/runs") if r.get("experimentKey") == args.experiment]
@@ -310,6 +316,18 @@ def main(argv=None):
 
     if args.exploratory and problems:
         print("\nNo verdict: the dataset is incomplete.")
+        return 0
+
+    # The decision rule below belongs to docs/preregistration-exp-be002-agentsmd.md: it
+    # gates on F02 and treats lower cost as better. An experiment that registered a
+    # different rule must not be handed this one — a machine-emitted KEEP/REJECT that the
+    # reader is expected to know to ignore is worse than no verdict at all, because the
+    # instruction to ignore it lives in a document and the verdict lives in the terminal.
+    if args.no_verdict:
+        print(
+            "\nNo verdict: --no-verdict. This tool implements the AGENTS.md decision rule\n"
+            "only. Apply the rule registered for this experiment to the table above."
+        )
         return 0
 
     # ---- the registered decision rule -------------------------------------------------

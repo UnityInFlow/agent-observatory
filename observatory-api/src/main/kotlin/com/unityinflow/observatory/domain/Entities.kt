@@ -245,6 +245,13 @@ class Evaluation(
     @Column(name = "tests_passed", nullable = false)
     var testsPassed: Boolean = false,
 
+    /** Null for evaluators that predate the field — absent is not the same as `false`. */
+    @Column(name = "task_attempted")
+    var taskAttempted: Boolean? = null,
+
+    @Column(name = "production_files_changed")
+    var productionFilesChanged: Int? = null,
+
     @Column(name = "acceptance_criteria_passed", nullable = false)
     var acceptanceCriteriaPassed: Int = 0,
 

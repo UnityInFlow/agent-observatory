@@ -1,8 +1,27 @@
 # Pre-registration — EXP-BE002-MODEL-TIER
 
-**Registered before any run of this experiment was executed.** Committed on 2026-08-09,
-against benchmarks `2ca08ca`. If the results disagree with this document, this document
-wins the argument about what was predicted.
+> ## ⚠ This registration's own ordering claim was false
+>
+> It originally read *"Registered before any run of this experiment was executed."* The
+> file was written before the batch was launched, but it was not **committed** until
+> `cc82fa5` at **12:45:53Z**, by which time nine haiku runs had already started
+> (12:22:53Z–12:45:10Z).
+>
+> An uncommitted file is not a registration. There is no auditable evidence of ordering,
+> which is the only thing a pre-registration is for, and the claim is withdrawn rather
+> than explained. Caught in review, not by the author.
+>
+> **`EXP-BE002-MODEL-TIER` (V1) is therefore void on two independent grounds** — this, and
+> the permission confound documented at the end. It is retained as a **pilot**: useful for
+> designing the real experiment, not usable as evidence.
+>
+> A V2 must be committed and pushed **before its first run**, with the environment
+> controls in §"What has to happen before this experiment is re-run" already in place.
+
+Written 2026-08-09 against benchmarks `2ca08ca`. If the results disagree with this
+document, this document wins the argument about what was predicted — for V2. V1's numbers
+are not covered by that guarantee, because the ordering that would have earned it was not
+established.
 
 Deliberately lighter than [`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md).
 That one earned its MDE tables and amendments because it was publishing a claim about a
@@ -152,11 +171,26 @@ Codex models explicitly.
 
 ## What has to happen before this experiment is re-run
 
-The agent must be able to run the project's build non-interactively, or a run that is
-blocked on permission must be classified as infrastructure (F13/F15) rather than as
-incorrect code. Preferably both — the second is the safety net for the first, because a
-permission block that is silently converted into a passing-looking dataset is how this
-class of bug survives.
+All of the following, before a V2 run exists:
 
-Either fix is a change to what the harness allows an agent to do, which is a deliberate
-decision and not a detail to slip into a re-run.
+1. **The agent can run the project's build non-interactively.** Done — the runner now
+   passes an explicit allowlist for `./mvnw`.
+2. **A run that produced no implementation is visible.** Done — the evaluator reports
+   `taskAttempted`, it is persisted through the API, and the analysis refuses a batch
+   containing such runs rather than averaging them in.
+3. **A hermetic runtime environment.** *Not done.* `--strict-mcp-config` isolates MCP
+   servers only; user settings, `CLAUDE.md`, hooks, plugins, skills and auto-memory still
+   load, and a higher-priority permission setting can still override the allowlist above.
+   Until the effective environment is isolated **and fingerprinted so drift fails the
+   run**, a model comparison is measuring the operator's machine as much as the model.
+4. **Pinned model identities.** *Not done.* `sonnet` is a moving alias and the run payload
+   persists only the requested alias, so a later re-run can execute a different model and
+   still pass the `runtime.model` gate. Full model IDs must be pinned, requested and
+   resolved identities persisted separately, and a mismatch must fail.
+5. **A protocol-specific analysis.** *Not done.* This registration names cost per passing
+   run and a confidence interval as its outcome; the shared analyzer implements neither and
+   emits an `F02`/`KEEP`/`REJECT` verdict belonging to a different question.
+
+Items 3–5 are tracked as issues. **V2 must not be launched until all five hold**, and the
+registration for it must be committed and pushed first — which is the specific failure this
+document already records against itself.

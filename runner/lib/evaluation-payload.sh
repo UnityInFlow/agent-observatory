@@ -29,7 +29,9 @@ EVALUATION_PAYLOAD_FILTER='{
     testsPassed:              .correctness.testsPassed,
     acceptanceSuitePassed:    .correctness.acceptanceSuitePassed,
     acceptanceCriteriaPassed: .correctness.acceptanceCriteriaPassed,
-    acceptanceCriteriaTotal:  .correctness.acceptanceCriteriaTotal
+    acceptanceCriteriaTotal:  .correctness.acceptanceCriteriaTotal,
+    taskAttempted:            .correctness.taskAttempted,
+    productionFilesChanged:   .correctness.productionFilesChanged
   },
   quality: {
     unrelatedFilesChanged: .quality.unrelatedFilesChanged,

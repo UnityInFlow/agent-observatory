@@ -8,7 +8,9 @@ These are not incidental. The U test, the dataset gate and the decision rule tog
 produce a KEEP/REJECT that goes into a document, so a later tidy-up must not be able to
 change the registered analysis silently.
 """
+import contextlib
 import importlib.util
+import io
 import pathlib
 import unittest
 
@@ -290,3 +292,39 @@ class UnattemptedRuns(unittest.TestCase):
         arms, discarded, _, _ = ae.partition(runs, "baseline", "instructions")
         self.assertEqual(len(arms["instructions"]), 2)
         self.assertEqual(discarded["instructions"], 0)
+
+
+class NoVerdictMode(unittest.TestCase):
+    """A verdict from the wrong decision rule is worse than no verdict."""
+
+    def invoke(self, runs, *argv):
+        original, buf = ae.fetch, io.StringIO()
+        ae.fetch = lambda url: runs
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = ae.main(["EXP-TEST", *argv])
+        finally:
+            ae.fetch = original
+        return code, buf.getvalue()
+
+    def complete(self):
+        runs = ([run("baseline", cost=0.2) for _ in range(2)]
+                + [run("instructions", cost=0.1) for _ in range(2)])
+        for r in runs:
+            r["experimentKey"] = "EXP-TEST"
+        return runs
+
+    def test_no_verdict_suppresses_the_agentsmd_decision_rule(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2", "--no-verdict")
+        self.assertEqual(code, 0)
+        self.assertNotIn("VERDICT", out)
+        self.assertIn("No verdict", out)
+
+    def test_no_verdict_still_prints_the_measurements(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2", "--no-verdict")
+        self.assertIn("cost", out)
+        self.assertIn("pass", out)
+
+    def test_verdict_is_emitted_by_default(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2")
+        self.assertIn("VERDICT", out)

@@ -142,6 +142,8 @@ class RunService(
             failureClass = request.failureClass?.takeIf { it.isNotBlank() }
             buildPassed = request.correctness.buildPassed
             testsPassed = request.correctness.testsPassed
+            taskAttempted = request.correctness.taskAttempted
+            productionFilesChanged = request.correctness.productionFilesChanged
             acceptanceCriteriaPassed = request.correctness.acceptanceCriteriaPassed
             acceptanceCriteriaTotal = request.correctness.acceptanceCriteriaTotal
             unrelatedFilesChanged = request.quality.unrelatedFilesChanged
@@ -298,6 +300,8 @@ class RunService(
                     infrastructureFailure = it.isInfrastructureFailure(),
                     buildPassed = it.buildPassed,
                     testsPassed = it.testsPassed,
+                    taskAttempted = it.taskAttempted,
+                    productionFilesChanged = it.productionFilesChanged,
                     acceptanceCriteriaPassed = it.acceptanceCriteriaPassed,
                     acceptanceCriteriaTotal = it.acceptanceCriteriaTotal,
                     acceptanceRate = it.acceptanceRate(),

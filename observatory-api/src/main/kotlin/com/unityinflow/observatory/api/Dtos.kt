@@ -89,6 +89,13 @@ data class CorrectnessDto(
     val acceptanceSuitePassed: Boolean = false,
     val acceptanceCriteriaPassed: Int = 0,
     val acceptanceCriteriaTotal: Int = 0,
+    /**
+     * Whether the agent changed any production file at all. Nullable on purpose: an
+     * evaluator that predates the field says nothing about it, and that is not the same
+     * claim as "the task was not attempted". Only an explicit `false` condemns a run.
+     */
+    val taskAttempted: Boolean? = null,
+    val productionFilesChanged: Int? = null,
 )
 
 data class QualityDto(
@@ -164,6 +171,14 @@ data class EvaluationResponse(
     val infrastructureFailure: Boolean,
     val buildPassed: Boolean,
     val testsPassed: Boolean,
+    /**
+     * Null when the evaluator did not report it. `false` means the agent changed no
+     * production file, so the run is not evidence about the code it would have written —
+     * see the analyzer, which refuses a batch containing such runs rather than averaging
+     * them in.
+     */
+    val taskAttempted: Boolean?,
+    val productionFilesChanged: Int?,
     val acceptanceCriteriaPassed: Int,
     val acceptanceCriteriaTotal: Int,
     val acceptanceRate: Double,
