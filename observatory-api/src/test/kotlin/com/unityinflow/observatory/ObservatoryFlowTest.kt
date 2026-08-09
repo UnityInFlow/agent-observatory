@@ -341,6 +341,46 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `an arm whose every run was discarded reports no rate at all, not zero`() {
+        registerBenchmark("BE-FLOW-12")
+        evaluate(createRun("BE-FLOW-12", "EXP-ALL-INFRA", "baseline", 20, 100_000), passed = true)
+        // The instructions arm never really ran: both attempts died on an exhausted quota.
+        repeat(2) {
+            evaluate(
+                createRun("BE-FLOW-12", "EXP-ALL-INFRA", "instructions", 0, 1_000),
+                passed = false,
+                failureClass = "F13",
+            )
+        }
+
+        mockMvc.perform(get("/api/experiments/EXP-ALL-INFRA/comparison"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.variants[1].variant").value("instructions"))
+            .andExpect(jsonPath("$.variants[1].runs").value(0))
+            .andExpect(jsonPath("$.variants[1].infrastructureFailures").value(2))
+            // A 0.0 here would render as 0% and hand the comparison to the other arm —
+            // no measurement dressed up as the worst possible result.
+            .andExpect(jsonPath("$.variants[1].passRate").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].acceptanceRate").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].medianToolCalls").doesNotExist())
+            .andExpect(jsonPath("$.variants[0].passRate").value(1.0))
+    }
+
+    @Test
+    fun `marks an infrastructure failure on the run itself, so every screen agrees`() {
+        registerBenchmark("BE-FLOW-13")
+        val discarded = createRun("BE-FLOW-13", "EXP-RUN-FLAG", "baseline", 0, 1_000)
+        evaluate(discarded, passed = false, failureClass = "F13")
+        val genuine = createRun("BE-FLOW-13", "EXP-RUN-FLAG", "baseline", 12, 90_000)
+        evaluate(genuine, passed = false, failureClass = "F03")
+
+        mockMvc.perform(get("/api/runs/$discarded"))
+            .andExpect(jsonPath("$.evaluation.infrastructureFailure").value(true))
+        mockMvc.perform(get("/api/runs/$genuine"))
+            .andExpect(jsonPath("$.evaluation.infrastructureFailure").value(false))
+    }
+
+    @Test
     fun `counts an infrastructure failure as discarded, not as a failed run, in prometheus`() {
         registerBenchmark("BE-FLOW-10")
         evaluate(

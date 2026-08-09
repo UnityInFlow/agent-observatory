@@ -153,6 +153,12 @@ data class EvaluationResponse(
     val exitCode: Int,
     val passed: Boolean,
     val failureClass: String?,
+    /**
+     * F13/F15 — the harness or the environment failed, not the agent. Derived from the
+     * same [com.unityinflow.observatory.domain.FailureTaxonomy] the comparison uses, so a
+     * run cannot read as "discarded" on one screen and "failed" on another.
+     */
+    val infrastructureFailure: Boolean,
     val buildPassed: Boolean,
     val testsPassed: Boolean,
     val acceptanceCriteriaPassed: Int,
@@ -208,8 +214,9 @@ data class VariantComparison(
      */
     val infrastructureFailures: Int,
     val passed: Int,
-    val passRate: Double,
-    val acceptanceRate: Double,
+    /** Null when no run in this arm measured the variant — never 0.0, which reads as failure. */
+    val passRate: Double?,
+    val acceptanceRate: Double?,
     val medianToolCalls: Double?,
     val medianModelCalls: Double?,
     /** Billable input + output. Excludes cache, which is usually the larger number. */
