@@ -8,7 +8,9 @@ These are not incidental. The U test, the dataset gate and the decision rule tog
 produce a KEEP/REJECT that goes into a document, so a later tidy-up must not be able to
 change the registered analysis silently.
 """
+import contextlib
 import importlib.util
+import io
 import pathlib
 import unittest
 
@@ -217,3 +219,112 @@ class Verdict(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VariedDimension(unittest.TestCase):
+    """--vary lets the treatment BE a fixed dimension, without opening the gate generally."""
+
+    def validate(self, runs, vary=(), n=2):
+        arms, discarded, unevaluated, unexpected = ae.partition(runs, "baseline", "instructions")
+        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n, vary)
+
+    def two_arms(self, ctrl_model, treat_model):
+        return ([run("baseline", model=ctrl_model) for _ in range(2)]
+                + [run("instructions", model=treat_model) for _ in range(2)])
+
+    def test_mixed_models_still_fail_closed_without_vary(self):
+        problems = self.validate(self.two_arms("haiku", "sonnet"))
+        self.assertTrue(any("runtime.model" in p for p in problems))
+
+    def test_vary_permits_the_intended_difference(self):
+        problems = self.validate(self.two_arms("haiku", "sonnet"), vary=("runtime.model",))
+        self.assertEqual(problems, [])
+
+    def test_vary_rejects_an_arm_that_mixes_values(self):
+        runs = ([run("baseline", model="haiku"), run("baseline", model="sonnet")]
+                + [run("instructions", model="sonnet") for _ in range(2)])
+        problems = self.validate(runs, vary=("runtime.model",))
+        self.assertTrue(any("mixes 2 values" in p for p in problems))
+
+    def test_vary_rejects_arms_that_do_not_actually_differ(self):
+        problems = self.validate(self.two_arms("haiku", "haiku"), vary=("runtime.model",))
+        self.assertTrue(any("both arms have the same value" in p for p in problems))
+
+    def test_vary_rejects_an_unknown_dimension(self):
+        problems = self.validate(self.two_arms("haiku", "haiku"), vary=("runtime.temperature",))
+        self.assertTrue(any("is not one of" in p for p in problems))
+
+    def test_varying_one_dimension_does_not_relax_the_others(self):
+        runs = ([run("baseline", model="haiku", sha="abc") for _ in range(2)]
+                + [run("instructions", model="sonnet", sha="def") for _ in range(2)])
+        problems = self.validate(runs, vary=("runtime.model",))
+        self.assertTrue(any("repository.commitSha" in p for p in problems))
+
+
+class UnattemptedRuns(unittest.TestCase):
+    """A run that changed no production file is not evidence about the code."""
+
+    def validate(self, runs, n=2):
+        arms, discarded, unevaluated, unexpected = ae.partition(runs, "baseline", "instructions")
+        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n)
+
+    def test_unattempted_runs_block_the_analysis(self):
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        problems = self.validate(runs)
+        self.assertTrue(any("changed no production file" in p for p in problems))
+
+    def test_attempted_runs_are_fine(self):
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        for r in runs:
+            r["evaluation"]["taskAttempted"] = True
+        self.assertEqual(self.validate(runs), [])
+
+    def test_absent_field_is_not_treated_as_unattempted(self):
+        """Runs recorded before the evaluator emitted the field must not be condemned."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        self.assertEqual(self.validate(runs), [])
+
+    def test_an_unattempted_run_is_still_counted_not_discarded(self):
+        """It stays in the arm. Silently dropping it would flatter the agent."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        arms, discarded, _, _ = ae.partition(runs, "baseline", "instructions")
+        self.assertEqual(len(arms["instructions"]), 2)
+        self.assertEqual(discarded["instructions"], 0)
+
+
+class NoVerdictMode(unittest.TestCase):
+    """A verdict from the wrong decision rule is worse than no verdict."""
+
+    def invoke(self, runs, *argv):
+        original, buf = ae.fetch, io.StringIO()
+        ae.fetch = lambda url: runs
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = ae.main(["EXP-TEST", *argv])
+        finally:
+            ae.fetch = original
+        return code, buf.getvalue()
+
+    def complete(self):
+        runs = ([run("baseline", cost=0.2) for _ in range(2)]
+                + [run("instructions", cost=0.1) for _ in range(2)])
+        for r in runs:
+            r["experimentKey"] = "EXP-TEST"
+        return runs
+
+    def test_no_verdict_suppresses_the_agentsmd_decision_rule(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2", "--no-verdict")
+        self.assertEqual(code, 0)
+        self.assertNotIn("VERDICT", out)
+        self.assertIn("No verdict", out)
+
+    def test_no_verdict_still_prints_the_measurements(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2", "--no-verdict")
+        self.assertIn("cost", out)
+        self.assertIn("pass", out)
+
+    def test_verdict_is_emitted_by_default(self):
+        code, out = self.invoke(self.complete(), "--expect-n", "2")
+        self.assertIn("VERDICT", out)

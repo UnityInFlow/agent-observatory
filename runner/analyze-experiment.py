@@ -48,6 +48,12 @@ LOWER_IS_BETTER = {"cost", "duration", "toolCalls", "cacheTokens", "modelCalls"}
 PRIMARY = "cost"
 
 # Dimensions that must be identical across every run, or the arms are not comparable.
+#
+# One of these can be the treatment itself — comparing haiku against sonnet varies
+# runtime.model on purpose. That is allowed only when named explicitly with --vary, so a
+# dataset that mixes models by accident still fails closed. Silence is not consent here:
+# the whole point of the gate is that an unintended difference between the arms looks
+# exactly like an effect.
 FIXED_DIMENSIONS = ("benchmarkId", "runtime.provider", "runtime.model", "repository.commitSha")
 
 
@@ -149,8 +155,14 @@ def partition(runs, control, treatment):
     return arms, discarded, unevaluated, unexpected
 
 
-def validate(runs, arms, discarded, unevaluated, unexpected, expected_n):
-    """Refuse to produce numbers for anything but the registered dataset."""
+def validate(runs, arms, discarded, unevaluated, unexpected, expected_n, vary=()):
+    """Refuse to produce numbers for anything but the registered dataset.
+
+    `vary` names dimensions the experiment deliberately changes between arms. A varied
+    dimension must actually separate the arms — one value per arm, and different values
+    across them. A "model comparison" where both arms ran the same model, or where one arm
+    contains two models, is not the experiment anyone registered.
+    """
     problems = []
     if unexpected:
         problems.append(f"unexpected variants present: {sorted(unexpected)}")
@@ -163,14 +175,34 @@ def validate(runs, arms, discarded, unevaluated, unexpected, expected_n):
                 + (f" ({discarded[arm]} discarded — replace them with fresh runs)" if discarded[arm] else "")
             )
     for dim in FIXED_DIMENSIONS:
+        if dim in vary:
+            continue
         seen = {json.dumps(dig(r, dim)) for r in runs}
         if len(seen) > 1:
             problems.append(f"'{dim}' differs across runs: {sorted(seen)}")
+    for dim in vary:
+        if dim not in FIXED_DIMENSIONS:
+            problems.append(f"--vary '{dim}' is not one of {list(FIXED_DIMENSIONS)}")
+            continue
+        per_arm = {arm: {json.dumps(dig(r, dim)) for r, _ in rows} for arm, rows in arms.items()}
+        for arm, values in per_arm.items():
+            if len(values) > 1:
+                problems.append(f"arm '{arm}' mixes {len(values)} values of the varied '{dim}': {sorted(values)}")
+        settled = [next(iter(v)) for v in per_arm.values() if len(v) == 1]
+        if len(settled) == len(per_arm) and len(set(settled)) == 1:
+            problems.append(f"--vary '{dim}' but both arms have the same value {settled[0]}")
     for arm, rows in arms.items():
         for key in ("toolCalls", "cost"):
             n = sum(1 for r, _ in rows if metrics(r)[key] is not None)
             if rows and n != len(rows):
                 problems.append(f"arm '{arm}' has {len(rows) - n} run(s) missing {key} telemetry")
+    for arm, rows in arms.items():
+        unattempted = sum(1 for _, ev in rows if ev.get("taskAttempted") is False)
+        if unattempted:
+            problems.append(
+                f"arm '{arm}' has {unattempted} run(s) that changed no production file — "
+                "the task was not attempted, so those runs are not evidence about the code"
+            )
     return problems
 
 
@@ -186,6 +218,20 @@ def main(argv=None):
         action="store_true",
         help="analyse an incomplete dataset. Stamps the output NOT A RESULT and emits no verdict.",
     )
+    ap.add_argument(
+        "--vary",
+        action="append",
+        default=[],
+        metavar="DIMENSION",
+        help="a fixed dimension this experiment changes on purpose, e.g. --vary runtime.model. "
+             "Must separate the arms cleanly: one value per arm, different between them.",
+    )
+    ap.add_argument(
+        "--no-verdict",
+        action="store_true",
+        help="print the metric table and failure mix, and emit NO verdict. Required for any "
+             "experiment whose registered decision rule is not the one coded here.",
+    )
     args = ap.parse_args(argv)
 
     runs = [r for r in fetch(f"{args.api}/api/runs") if r.get("experimentKey") == args.experiment]
@@ -193,7 +239,7 @@ def main(argv=None):
         sys.exit(f"no runs recorded for experiment '{args.experiment}'")
 
     arms, discarded, unevaluated, unexpected = partition(runs, args.control, args.treatment)
-    problems = validate(runs, arms, discarded, unevaluated, unexpected, args.expect_n)
+    problems = validate(runs, arms, discarded, unevaluated, unexpected, args.expect_n, tuple(args.vary))
 
     if problems and not args.exploratory:
         print(f"REFUSING to analyse '{args.experiment}': this is not the registered dataset.\n")
@@ -215,7 +261,14 @@ def main(argv=None):
     print(f"experiment  {args.experiment}")
     for arm in (c, t):
         d = f", {discarded[arm]} discarded (F13/F15)" if discarded[arm] else ""
-        print(f"  {arm:<14} {len(arms[arm])} measuring{d}")
+        val = ""
+        for dim in args.vary:
+            seen = {json.dumps(dig(r, dim)) for r, _ in arms[arm]}
+            if len(seen) == 1:
+                val += f"   {dim}={json.loads(next(iter(seen)))}"
+        print(f"  {arm:<14} {len(arms[arm])} measuring{d}{val}")
+    if args.vary:
+        print(f"\n  treatment dimension: {', '.join(args.vary)} — varied on purpose, not a dataset fault")
     print()
 
     print(f"{'metric':<13}{'n':>5}{c:>13}{t:>13}{'change':>10}{'p':>7}  note")
@@ -263,6 +316,18 @@ def main(argv=None):
 
     if args.exploratory and problems:
         print("\nNo verdict: the dataset is incomplete.")
+        return 0
+
+    # The decision rule below belongs to docs/preregistration-exp-be002-agentsmd.md: it
+    # gates on F02 and treats lower cost as better. An experiment that registered a
+    # different rule must not be handed this one — a machine-emitted KEEP/REJECT that the
+    # reader is expected to know to ignore is worse than no verdict at all, because the
+    # instruction to ignore it lives in a document and the verdict lives in the terminal.
+    if args.no_verdict:
+        print(
+            "\nNo verdict: --no-verdict. This tool implements the AGENTS.md decision rule\n"
+            "only. Apply the rule registered for this experiment to the table above."
+        )
         return 0
 
     # ---- the registered decision rule -------------------------------------------------

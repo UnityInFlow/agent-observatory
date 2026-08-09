@@ -104,6 +104,61 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `carries taskAttempted from the evaluator through to the API response`() {
+        // The analyzer refuses a batch containing runs that changed no production file. That
+        // guard was once written against a response shape the API did not produce, so it
+        // could never fire on real data. This is the round trip it depends on.
+        registerBenchmark("BE-ATTEMPT")
+        val runId = createRun("BE-ATTEMPT", "EXP-ATTEMPT", "baseline", toolCalls = 4, durationMs = 1000)
+        mockMvc.perform(
+            post("/api/runs/$runId/evaluation").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "evaluatorVersion": "1.0.0",
+                  "exitCode": 12,
+                  "failureClass": "F03",
+                  "correctness": {
+                    "buildPassed": true,
+                    "testsPassed": false,
+                    "acceptanceCriteriaPassed": 3,
+                    "acceptanceCriteriaTotal": 7,
+                    "taskAttempted": false,
+                    "productionFilesChanged": 0
+                  },
+                  "quality": { "unrelatedFilesChanged": 0, "newDependencies": 0, "staticAnalysisPassed": true },
+                  "safety": { "forbiddenActionAttempts": 0, "secretExposureDetected": false }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isOk)
+
+        mockMvc.perform(get("/api/runs/$runId"))
+            .andExpect(jsonPath("$.evaluation.taskAttempted").value(false))
+            .andExpect(jsonPath("$.evaluation.productionFilesChanged").value(0))
+
+        // The analyzer reads the *list* endpoint, not the detail one, so the field has to
+        // survive that path too. Asserted by reading the body rather than with a JsonPath
+        // filter, which returns null for a miss and would pass for the wrong reason.
+        val listBody = mockMvc.perform(get("/api/runs"))
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        val attempted: List<Boolean?> =
+            JsonPath.read(listBody, "$[?(@.runId == '$runId')].evaluation.taskAttempted")
+        org.junit.jupiter.api.Assertions.assertEquals(listOf(false), attempted)
+    }
+
+    @Test
+    fun `leaves taskAttempted null when the evaluator does not report it`() {
+        // Absent is not the same claim as false. Runs recorded before the evaluator emitted
+        // the field must not read as "the task was not attempted" and condemn a whole batch.
+        registerBenchmark("BE-ABSENT")
+        val runId = createRun("BE-ABSENT", "EXP-ABSENT", "baseline", toolCalls = 4, durationMs = 1000)
+        evaluate(runId, passed = true)
+        mockMvc.perform(get("/api/runs/$runId"))
+            .andExpect(jsonPath("$.evaluation.taskAttempted").doesNotExist())
+    }
+
+    @Test
     fun `records a run, its evaluation and a human review, then exposes them on the detail endpoint`() {
         registerBenchmark("BE-FLOW-1")
         val runId = createRun("BE-FLOW-1", "EXP-FLOW-1", "baseline", toolCalls = 23, durationMs = 182_000)
