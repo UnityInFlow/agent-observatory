@@ -193,9 +193,14 @@ Not yet committed or PR'd — do this before anything else:
 
 Full suite green: `make test-runner` → 47 tests.
 
-Not done: a recorded UAT of the five questions; a decision on M11 (recommend descoping the
-Codex adapter to Chapter 01 **in writing**); making `BehaviorDto`'s counters nullable so a
-telemetry gap stops being indistinguishable from a genuine zero.
+Not done: a recorded UAT of the five questions; making `BehaviorDto`'s counters nullable so
+a telemetry gap stops being indistinguishable from a genuine zero.
+
+**M11 is decided** — deferred to Chapter 01, written up in
+[ADR-001](adr-001-defer-codex-adapter.md). Chapter 00 closes at two runtimes. The short
+version: a third adapter adds integration surface rather than answers, the bottleneck is
+benchmark tasks and not runtimes, and an adapter no experiment exercises is where the
+seventh harness bug would hide.
 
 ## Practical notes
 

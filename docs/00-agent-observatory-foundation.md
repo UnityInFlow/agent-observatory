@@ -50,7 +50,7 @@ evaluator agree it was correct.
 | **M8** | benchmark runner + one-command ecosystem | a clean machine reaches a working stack with `make up` | done |
 | **M9** | Grafana dashboard + metric catalog | seven panels, low cardinality, documented non-KPIs | done |
 | **M10** | Claude Code adapter | same benchmark appears beside Copilot | done |
-| M11 | Codex adapter | same comparison model despite different native telemetry | open |
+| M11 | Codex adapter | same comparison model despite different native telemetry | **deferred to Chapter 01** — [ADR-001](adr-001-defer-codex-adapter.md) |
 
 ---
 
