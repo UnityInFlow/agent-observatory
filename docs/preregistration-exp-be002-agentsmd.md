@@ -94,3 +94,45 @@ F02s is a qualitative change, not a shift in a mean.
 - No run is dropped except F13/F15, which the comparison excludes automatically.
 - If a run has to be discarded for any other reason, the reason is written here before the
   analysis is published.
+
+---
+
+## Amendment 1 — 2026-08-09, before any B1 run existed
+
+Three gaps in the registration above, closed while the treatment arm was still empty. All
+three were raised in review of the analysis tool, not discovered by looking at data.
+
+**1. `KEEP` requires statistical significance, not just a large median shift.** The
+original rule said "improves the primary metric beyond its MDE", which left open whether
+p < .05 was also needed. It is: `KEEP` requires the cost median to fall by at least the
+MDE **and** p < .05 on the Mann-Whitney U, **and** no increase in F02. Anything else that
+is not a `REJECT` is `INCONCLUSIVE`. Deciding this after seeing a borderline p value would
+have been choosing the answer.
+
+**2. The analysis fails closed on anything but the registered dataset.** It refuses to
+print a p value unless both arms have exactly the registered number of measuring runs,
+every run is evaluated, no unexpected variant is present, and benchmark, runtime, model
+and baseline commit are identical across all runs. A discarded F13/F15 run must be
+*replaced* by another run, not tolerated as a short arm. Without this the tool could be
+re-run during a batch until the number looked good, which is optional stopping.
+
+**3. A run with zero model calls and zero tool calls is missing telemetry, not an
+efficient run.** The API serialises those fields with `0` defaults, so a collector gap is
+indistinguishable from a genuine zero. Such runs are excluded and the arm is flagged;
+otherwise an outage concentrated in one arm reads as an efficiency improvement.
+
+## Void — this experiment must be re-run
+
+The first batch was stopped after three runs. The benchmark repository handed to the agent
+contains `tasks/BE-002-order-amount-validation/`, which holds the graded acceptance
+suites and a `fixtures/known-good/` model solution, plus a `README.md` that now describes
+the trap in prose. Pilot run `a69933a0` named `BE002FunctionalTest` and `BE002ContractTest`
+in its own summary — filenames that exist nowhere else — so at least one agent read the
+answer key.
+
+Every BE-002 number recorded so far, including the five-run pilot this registration draws
+its power estimates from, was measured with the answer visible. The MDE table above is
+therefore not trustworthy, and will be re-derived from a clean B0 arm and registered here
+before any B1 run of the replacement experiment.
+
+The predictions are unchanged. They were never based on the pilot's variance.

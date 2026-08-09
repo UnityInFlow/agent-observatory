@@ -10,3 +10,7 @@ infra/telemetry-out/
 # it turns every branch switch into a conflict and risks committing a stale PID. Related:
 # the evaluator already ignores .memdb/ so the daemon cannot be counted as an agent change.
 .memdb/
+
+# Python bytecode from the runner analysis tests.
+__pycache__/
+*.pyc

@@ -140,7 +140,7 @@ open: ## Open the UI and Grafana in a browser
 # ---------------------------------------------------------------------------
 
 .PHONY: test
-test: test-api test-web ## Run all tests
+test: test-api test-web test-runner ## Run all tests
 
 .PHONY: test-api
 test-api: ## Run the API test suite (Testcontainers PostgreSQL — needs Docker)
@@ -149,6 +149,10 @@ test-api: ## Run the API test suite (Testcontainers PostgreSQL — needs Docker)
 .PHONY: test-web
 test-web: ## Type-check and build the web app
 	@cd $(WEB_DIR) && npm install --silent && npm run build
+
+.PHONY: test-runner
+test-runner: ## Run the runner's analysis tests (statistics that decide a verdict)
+	@python3 -m unittest discover -s runner -p 'test_*.py'
 
 .PHONY: smoke
 smoke: ## End-to-end check against a running stack
