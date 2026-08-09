@@ -288,7 +288,64 @@ the cost bar is now **24%**, and `runner/analyze-experiment.py` has been updated
 
 ---
 
-# Result — `EXP-BE002-AGENTSMD-V3`, 2026-08-09
+# Void (3) — `EXP-BE002-AGENTSMD-V3`: the treatment was never loaded
+
+**Everything in the Result section below is void.** It is kept unedited because deleting a
+published result teaches nothing, and because the way it looked correct is the point.
+
+Claude Code does not read `AGENTS.md`. It reads `CLAUDE.md`. Confirmed by controlled test
+on 2026-08-09 — an instruction file placed in an empty directory, asked for a value only
+that file contains:
+
+| file name | agent's answer |
+|---|---|
+| `AGENTS.md` | did not know |
+| `CLAUDE.md` | returned the value |
+
+`agents-md-v1` is a **Copilot-native** customization; Copilot reads `AGENTS.md`. It was run
+against Claude. The B1 arm therefore differed from B0 by a file the model never saw:
+**baseline against baseline.**
+
+## Why it looked airtight
+
+Every check that could have caught this passed, which is worth studying:
+
+- the customization directory existed and was installed
+- `hash_of AGENTS.md` produced a real hash, and **all ten B1 runs carried the same
+  `instructionsHash`** — which was cited as proof the file was byte-identical throughout
+- the diff, evaluation and telemetry were all normal
+- the arms differed in the recorded metadata, so no dataset gate could object
+
+The harness verified that the file was *installed*. Nothing verified it was *read*. Those
+are different claims, and only the second one is the experiment.
+
+## What this explains
+
+The Result section reports a −12.8% cost shift at p = .04 and a pass rate of 80% → 100%.
+Those are two baseline arms differing by noise. Independent confirmation: the same day, two
+*deliberately identical* haiku arms four hours apart produced **8/10 vs 10/10 pass and 19 vs
+14 median tool calls** — the same magnitude, from configurations known to be the same. That
+anomaly was recorded as unexplained. This is the explanation.
+
+## What survives
+
+- **The predictions.** They have never been tested. All four stand, unmodified, and §32
+  still forbids editing the instruction file in response to results.
+- **Amendment 2's MDE table.** Derived from the B0 arm, which was a valid clean baseline
+  regardless of what the other arm did.
+- **Nothing else.** No claim about instruction effectiveness has been measured by this
+  project.
+
+## Replacement
+
+`EXP-BE002-CLAUDEMD`, identical in every respect except that the instruction file is named
+what the runtime actually loads. It must not be launched until the runner fails at start
+when a customization is not one the target runtime reads — otherwise this failure is
+available again, and the next one will look exactly as convincing.
+
+---
+
+# Result — `EXP-BE002-AGENTSMD-V3`, 2026-08-09 — **VOID, see above**
 
 Both arms complete: 10 + 10 measuring runs, no F13/F15 discards, every run evaluated,
 identical benchmark, runtime, model and baseline commit. All ten B1 runs carry the same
