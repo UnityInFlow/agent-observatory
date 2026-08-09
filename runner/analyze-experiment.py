@@ -27,8 +27,19 @@ INFRASTRUCTURE = {"F13", "F15"}
 # is printed; a discarded run must be replaced by another run, not silently tolerated.
 EXPECTED_MEASURING_RUNS = 10
 
-# Minimum detectable effect at n=10 per arm, alpha .05 two-sided, 80% power.
-MDE = {"cost": 0.19, "duration": 0.16, "toolCalls": 0.30, "cacheTokens": 0.36}
+# Minimum detectable effect at n=10 per arm, alpha .05 two-sided, 80% power, rank test.
+#
+# Amendment 2: derived by derive-mde.py from the clean B0 arm of EXP-BE002-AGENTSMD-V3,
+# replacing a table estimated from a pilot that ran with the benchmark's answer key
+# visible. The clean task is more variable than the pilot implied, so every threshold that
+# matters got harder: cost 19% -> 24%, tool calls 30% -> 36%.
+#
+# duration is 175% because one run of the arm stalled at 1063 s against 82-167 s for the
+# rest. It is registered at that value deliberately. The run passed, so the F13/F15 rule
+# cannot exclude it, and inventing an outlier rule after seeing the outlier would be
+# choosing the analysis. A 175% threshold simply means duration decides nothing here,
+# which is the honest consequence and not a bug to route around.
+MDE = {"cost": 0.24, "duration": 1.75, "toolCalls": 0.36, "cacheTokens": 0.32}
 
 # Every metric here is lower-is-better. Direction is explicit because abs(change) would
 # give a 20% cost *increase* the same verdict as a 20% decrease.
