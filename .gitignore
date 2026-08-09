@@ -5,3 +5,8 @@ node_modules/
 *.log
 infra/.env
 infra/telemetry-out/
+
+# Memtrace background daemon state. It is rewritten while the daemon runs, so tracking
+# it turns every branch switch into a conflict and risks committing a stale PID. Related:
+# the evaluator already ignores .memdb/ so the daemon cannot be counted as an agent change.
+.memdb/
