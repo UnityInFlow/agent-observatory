@@ -217,3 +217,43 @@ class Verdict(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VariedDimension(unittest.TestCase):
+    """--vary lets the treatment BE a fixed dimension, without opening the gate generally."""
+
+    def validate(self, runs, vary=(), n=2):
+        arms, discarded, unevaluated, unexpected = ae.partition(runs, "baseline", "instructions")
+        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n, vary)
+
+    def two_arms(self, ctrl_model, treat_model):
+        return ([run("baseline", model=ctrl_model) for _ in range(2)]
+                + [run("instructions", model=treat_model) for _ in range(2)])
+
+    def test_mixed_models_still_fail_closed_without_vary(self):
+        problems = self.validate(self.two_arms("haiku", "sonnet"))
+        self.assertTrue(any("runtime.model" in p for p in problems))
+
+    def test_vary_permits_the_intended_difference(self):
+        problems = self.validate(self.two_arms("haiku", "sonnet"), vary=("runtime.model",))
+        self.assertEqual(problems, [])
+
+    def test_vary_rejects_an_arm_that_mixes_values(self):
+        runs = ([run("baseline", model="haiku"), run("baseline", model="sonnet")]
+                + [run("instructions", model="sonnet") for _ in range(2)])
+        problems = self.validate(runs, vary=("runtime.model",))
+        self.assertTrue(any("mixes 2 values" in p for p in problems))
+
+    def test_vary_rejects_arms_that_do_not_actually_differ(self):
+        problems = self.validate(self.two_arms("haiku", "haiku"), vary=("runtime.model",))
+        self.assertTrue(any("both arms have the same value" in p for p in problems))
+
+    def test_vary_rejects_an_unknown_dimension(self):
+        problems = self.validate(self.two_arms("haiku", "haiku"), vary=("runtime.temperature",))
+        self.assertTrue(any("is not one of" in p for p in problems))
+
+    def test_varying_one_dimension_does_not_relax_the_others(self):
+        runs = ([run("baseline", model="haiku", sha="abc") for _ in range(2)]
+                + [run("instructions", model="sonnet", sha="def") for _ in range(2)])
+        problems = self.validate(runs, vary=("runtime.model",))
+        self.assertTrue(any("repository.commitSha" in p for p in problems))
