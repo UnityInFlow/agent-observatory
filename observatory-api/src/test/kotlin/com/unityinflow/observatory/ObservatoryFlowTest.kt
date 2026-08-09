@@ -317,7 +317,8 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
                   "behavior": { "modelCalls": 24, "toolCalls": 19 },
                   "efficiency": {
                     "durationMs": 133000, "inputTokens": 195, "outputTokens": 8604,
-                    "cachedTokens": 1025390, "estimatedCost": 0.212708
+                    "cachedTokens": 1025390, "cacheCreationTokens": 15231,
+                    "estimatedCost": 0.212708
                   }
                 }
                 """.trimIndent(),
@@ -331,12 +332,16 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.variants[0].variant").value("anthropic/haiku"))
             .andExpect(jsonPath("$.variants[0].medianTokens").value(8799.0))
-            .andExpect(jsonPath("$.variants[0].medianCachedTokens").value(1025390.0))
+            // Reads + creations, and the creations broken out: a new instruction file is
+            // written to the cache before it is ever read from it.
+            .andExpect(jsonPath("$.variants[0].medianCacheTokens").value(1040621.0))
+            .andExpect(jsonPath("$.variants[0].medianCacheCreationTokens").value(15231.0))
             .andExpect(jsonPath("$.variants[0].medianEstimatedCost").value(0.212708))
             // §11: a runtime that reports no cost must produce no cost, never a zero that
             // would read as "this variant was free".
             .andExpect(jsonPath("$.variants[1].variant").value("github/gpt-x"))
-            .andExpect(jsonPath("$.variants[1].medianCachedTokens").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].medianCacheTokens").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].medianCacheCreationTokens").doesNotExist())
             .andExpect(jsonPath("$.variants[1].medianEstimatedCost").doesNotExist())
     }
 

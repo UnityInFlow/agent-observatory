@@ -22,6 +22,7 @@ export interface Efficiency {
   inputTokens: number | null;
   outputTokens: number | null;
   cachedTokens: number | null;
+  cacheCreationTokens: number | null;
   estimatedCost: number | null;
 }
 
@@ -98,7 +99,8 @@ export interface VariantComparison {
   medianToolCalls: number | null;
   medianModelCalls: number | null;
   medianTokens: number | null;
-  medianCachedTokens: number | null;
+  medianCacheTokens: number | null;
+  medianCacheCreationTokens: number | null;
   medianEstimatedCost: number | null;
   medianDurationMs: number | null;
   medianRetries: number | null;

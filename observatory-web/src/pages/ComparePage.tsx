@@ -32,7 +32,8 @@ const ROWS: MetricRow[] = [
   { label: 'tokens (median)', value: (v) => v.medianTokens, format: fmtTokens, better: 'lower' },
   // Cache is where an instruction file's footprint actually lands — omitting it would
   // hide the cost of the very thing a customization experiment varies.
-  { label: 'cached tokens (median)', value: (v) => v.medianCachedTokens, format: fmtTokens, better: 'lower' },
+  { label: 'cache tokens (median)', value: (v) => v.medianCacheTokens, format: fmtTokens, better: 'lower' },
+  { label: '— of which written (median)', value: (v) => v.medianCacheCreationTokens, format: fmtTokens, better: 'lower' },
   { label: 'cost (median)', value: (v) => v.medianEstimatedCost, format: fmtCost, better: 'lower' },
   { label: 'duration (median)', value: (v) => v.medianDurationMs, format: fmtDuration, better: 'lower' },
   { label: 'retries (median)', value: (v) => v.medianRetries, format: (n) => fmtNumber(n), better: 'lower' },

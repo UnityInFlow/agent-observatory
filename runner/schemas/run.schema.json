@@ -82,6 +82,7 @@
         "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
         "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
         "cachedTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cacheCreationTokens": { "type": ["integer", "null"], "minimum": 0 },
         "estimatedCost": { "type": ["number", "null"], "minimum": 0 }
       }
     },

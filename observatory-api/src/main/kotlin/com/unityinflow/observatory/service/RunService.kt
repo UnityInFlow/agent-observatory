@@ -103,6 +103,7 @@ class RunService(
                 inputTokens = request.efficiency.inputTokens,
                 outputTokens = request.efficiency.outputTokens,
                 cachedTokens = request.efficiency.cachedTokens,
+                cacheCreationTokens = request.efficiency.cacheCreationTokens,
                 estimatedCost = request.efficiency.estimatedCost,
             ),
             result = ChangeSummary(
@@ -184,6 +185,7 @@ class RunService(
                 inputTokens = it.inputTokens ?: run.efficiency.inputTokens,
                 outputTokens = it.outputTokens ?: run.efficiency.outputTokens,
                 cachedTokens = it.cachedTokens ?: run.efficiency.cachedTokens,
+                cacheCreationTokens = it.cacheCreationTokens ?: run.efficiency.cacheCreationTokens,
                 estimatedCost = it.estimatedCost ?: run.efficiency.estimatedCost,
             )
         }
@@ -275,6 +277,7 @@ class RunService(
                 run.efficiency.inputTokens,
                 run.efficiency.outputTokens,
                 run.efficiency.cachedTokens,
+                run.efficiency.cacheCreationTokens,
                 run.efficiency.estimatedCost,
             ),
             result = ResultDto(

@@ -121,7 +121,17 @@ class ComparisonService(
             medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
             medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
             medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
-            medianCachedTokens = median(measured.mapNotNull { it.efficiency.cachedTokens?.toDouble() }),
+            // Reads + creations: the whole cache footprint, which on a Claude run dwarfs
+            // input+output by two orders of magnitude.
+            medianCacheTokens = median(
+                measured.mapNotNull { e ->
+                    val read = e.efficiency.cachedTokens
+                    val created = e.efficiency.cacheCreationTokens
+                    if (read == null && created == null) null else ((read ?: 0L) + (created ?: 0L)).toDouble()
+                },
+            ),
+            medianCacheCreationTokens =
+                median(measured.mapNotNull { it.efficiency.cacheCreationTokens?.toDouble() }),
             medianEstimatedCost = median(measured.mapNotNull { it.efficiency.estimatedCost?.toDouble() }),
             medianDurationMs = median(measured.mapNotNull { it.efficiency.durationMs?.toDouble() }),
             medianRetries = median(measured.map { it.behavior.retries.toDouble() }),
