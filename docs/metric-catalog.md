@@ -163,6 +163,26 @@ median, and — the part that actually bit us — from the count checked against
 minimum. A run that never executed must not make a variant look worse, nor make an
 under-powered arm look adequately sampled.
 
+### Tokens are not one number
+
+`medianTokens` is **input + output only**. On a Claude/haiku BE-002 run that is 8.8k
+tokens — beside **1.03M** cache tokens, so the headline figure sees under 1% of what the
+model actually processed. The comparison therefore reports `medianCacheTokens` and
+`medianEstimatedCost` alongside it.
+
+Cache is split in two, because reads and creations are priced differently and move for
+different reasons: `medianCacheTokens` is reads + creations, and
+`medianCacheCreationTokens` is the written portion on its own. A newly installed
+`AGENTS.md` is *written* to the cache on the first request of a run and only read
+afterwards, so creations are the component a B0/B1 comparison moves most directly —
+reporting only reads would still hide it.
+
+This matters specifically for instruction-file experiments: an `AGENTS.md` adds context
+to every request, and with prompt caching that lands almost entirely in cache creation
+and reads. Comparing B0 with B1 on input+output alone would exclude the cost of the one
+thing being varied. Cost is null where the runtime documents none — a variant that
+reports nothing must never render as free.
+
 They are not hidden either: each variant reports `infrastructureFailures`, shown on the
 Compare page as the *discarded (F13/F15)* row. `runs` is therefore the number of
 **measuring** runs, while `totalRuns` still counts everything recorded. Every other

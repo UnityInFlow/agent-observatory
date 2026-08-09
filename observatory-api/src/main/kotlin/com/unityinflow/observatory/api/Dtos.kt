@@ -51,7 +51,10 @@ data class EfficiencyDto(
     val durationMs: Long? = null,
     val inputTokens: Long? = null,
     val outputTokens: Long? = null,
+    /** Cache reads. */
     val cachedTokens: Long? = null,
+    /** Cache creations — separate from reads because they are priced differently. */
+    val cacheCreationTokens: Long? = null,
     val estimatedCost: BigDecimal? = null,
 )
 
@@ -219,7 +222,21 @@ data class VariantComparison(
     val acceptanceRate: Double?,
     val medianToolCalls: Double?,
     val medianModelCalls: Double?,
+    /** Billable input + output. Excludes cache, which is usually the larger number. */
     val medianTokens: Double?,
+    /**
+     * Cache reads plus creations. On a Claude run these outnumber input+output ~100:1, and
+     * an instruction file's whole footprint is extra context — so a token comparison that
+     * omits them measures everything except the thing being varied.
+     */
+    val medianCacheTokens: Double?,
+    /**
+     * Creations alone. A newly installed AGENTS.md is written to the cache on the first
+     * request of every run, so this is the component a B0/B1 comparison moves most directly.
+     */
+    val medianCacheCreationTokens: Double?,
+    /** Vendor-reported cost in USD where the runtime documents one; null where it does not. */
+    val medianEstimatedCost: Double?,
     val medianDurationMs: Double?,
     val medianRetries: Double?,
     val meanUnrelatedFilesChanged: Double?,

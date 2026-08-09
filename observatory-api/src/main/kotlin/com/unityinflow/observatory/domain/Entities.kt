@@ -131,8 +131,17 @@ class EfficiencyMetrics(
     @Column(name = "output_tokens")
     var outputTokens: Long? = null,
 
+    /** Cache *reads* — context replayed from an existing prefix. */
     @Column(name = "cached_tokens")
     var cachedTokens: Long? = null,
+
+    /**
+     * Cache *creations* — context written to the cache for the first time. Priced
+     * differently from reads, and where a newly added instruction file lands on the first
+     * request of a run, so it is kept as its own number rather than folded into [cachedTokens].
+     */
+    @Column(name = "cache_creation_tokens")
+    var cacheCreationTokens: Long? = null,
 
     @Column(name = "estimated_cost")
     var estimatedCost: BigDecimal? = null,
