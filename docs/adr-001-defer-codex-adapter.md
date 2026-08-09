@@ -18,9 +18,20 @@ comparable is the actual work, and `architecture.md` is explicit that we normali
 the raw layer rather than fabricating parity.
 
 Chapter 00's stated purpose is to *learn how coding agents actually behave before
-customizing them*. That purpose is served. The instrument runs agents, grades them
-deterministically, records cost and behaviour, refuses datasets it cannot trust, and has
-produced one concluded experiment end to end.
+customizing them*. **The pipeline has been exercised end to end** — it runs agents, grades
+them deterministically, records cost and behaviour, and refuses datasets it cannot trust.
+
+That is a claim about the harness, not about what has been learned. It is deliberately
+weaker than the earlier draft of this ADR, which said the purpose was served because one
+experiment had concluded. `EXP-BE002-AGENTSMD-V3` placed `AGENTS.md` in the repository, but
+**Claude Code does not load `AGENTS.md`** — verified by controlled test: an identical file
+named `CLAUDE.md` is read, `AGENTS.md` is not. The intended treatment was never applied, so
+that experiment does not support its stated conclusion about instruction effectiveness and
+is reclassified as void.
+
+Whether Chapter 00's *learning* purpose is served therefore remains open until a
+customization experiment runs with a treatment the runtime actually reads. The decision
+below does not depend on it.
 
 ## Decision
 
