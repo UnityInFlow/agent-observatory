@@ -43,9 +43,11 @@ Two honest caveats on BE-002, both written up in
    **unchanged**. It already forbids exactly the behaviour that failed run 3, and it was
    written before BE-002 existed — instructions that pre-date the benchmark are much
    stronger evidence than a variant authored after seeing the failures (§32).
-3. **Analyse the continuous metrics, not the pass rate.** At n=10 per arm, 80% → 100% is
-   p ≈ 0.47 by Fisher's exact test — invisible. Tool calls, cost and cache tokens carry
-   1.5–1.9× spread and are where a real effect could show.
+3. **Treat that comparison as exploratory, and say so before running it.** At n=10 per
+   arm a pass rate of 80% → 100% is p ≈ 0.47 — invisible. The continuous metrics are
+   better but not by much: the minimum detectable effect is **16% on duration, 19% on
+   cost, 30% on tool calls, 36% on cache tokens**. Primary metric is median cost. Anything
+   smaller is a direction to investigate at larger n, not a finding.
 
 Also open: [#10](https://github.com/UnityInFlow/agent-observatory/issues/10) Codex adapter,
 [#11](https://github.com/UnityInFlow/agent-observatory/issues/11) governance checklist.

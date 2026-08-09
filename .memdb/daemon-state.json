@@ -1,0 +1,13 @@
+{
+  "pid": 17472,
+  "loopbackEndpoint": "http://127.0.0.1:50051",
+  "uiPort": 3030,
+  "memdbDataDir": "/Users/jirihermann/Documents/workspace-1-ideas/ai-agents/ai-learning/agent-observatory/.memdb",
+  "dataDir": "/Users/jirihermann/Documents/workspace-1-ideas/ai-agents/ai-learning/agent-observatory/.memtrace",
+  "memdbDatabase": "memtrace",
+  "vectorDim": 768,
+  "status": "healthy",
+  "memdbMode": "local",
+  "startedAtEpochMs": 1786218064195,
+  "updatedAtEpochMs": 1786256213835
+}

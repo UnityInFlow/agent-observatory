@@ -244,10 +244,11 @@ must be reported as such rather than rounded up into a success.
 
 ### The designed discriminator never fired
 
-Not one run failed AC4, the error-contract check. In all four runs that got that far the
-agent read the neighbouring 404 and 409 handlers and matched the envelope. The premise —
-"the obvious answer wins" — is simply weaker than assumed for this model on this task.
-The F02 exit path is, so far, decoration.
+Not one run failed AC4, the error-contract check — and **all five reached it**, run 3
+included. Its verdict was exit 21, the scope guard, which the evaluator checks *after* the
+acceptance suites; it passed both of them first. So the agent matched the envelope in
+every single run. The premise — "the obvious answer wins" — is simply weaker than assumed
+for this model on this task, and the F02 exit path is so far decoration.
 
 ### What did fail is more useful than what was designed
 
@@ -270,8 +271,26 @@ occur. §32 forbids the second; this is the first.
 - Run B0 vs B1 with `agents-md-v1` **unchanged**. Do not write a v2 that mentions the
   error envelope until after this comparison; that is tuning instructions to the metric.
 - A binary pass rate at n=10 per arm is near powerless — 80% → 100% is p ≈ 0.47 by
-  Fisher's exact test. The primary outcome must be the continuous metrics, where the
-  spread is 1.5–1.9× and a rank test on n=10 has some chance of resolving a real shift.
+  Fisher's exact test.
+- The continuous metrics are better, but **spread is dispersion, not power**: a wide
+  baseline makes a shift *harder* to resolve, not easier. Pre-specifying what n=10 per arm
+  could actually detect, at α = 0.05 two-sided and 80% power (d ≈ 1.32 for a rank test):
+
+  | metric | baseline mean | SD | minimum detectable effect |
+  |---|---:|---:|---:|
+  | duration | 134.4 s | 16.2 s | 21.3 s (**16%**) |
+  | cost | $0.215 | $0.030 | $0.040 (**19%**) |
+  | tool calls | 21.8 | 4.97 | 6.6 (**30%**) |
+  | cache tokens | 1.04 M | 284 k | 374 k (**36%**) |
+
+  So a 10 + 10 comparison can only resolve a *large* effect: roughly a fifth off cost or a
+  third off tool calls. An instruction file plausibly moves things by less than that.
+
+  **The comparison is therefore declared exploratory before it is run.** Primary metric:
+  median cost, chosen because it has the tightest relative spread of the metrics a
+  customization should affect. Anything below the thresholds above is a direction to
+  investigate at a larger n, not a result — and saying so now is what stops a 15%
+  improvement being written up as a finding after the fact.
 - Compare cost and cache tokens, not input+output. On these runs cache reads outnumber
   input+output **117:1**, and an instruction file's entire footprint is context.
 
