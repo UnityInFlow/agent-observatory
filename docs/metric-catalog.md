@@ -64,6 +64,10 @@ Start small. This is the first catalog, not the final one.
 | `observatory_run_tokens` | summary | ″ |
 | `observatory_run_acceptance_rate` | summary | ″ |
 
+Runs classified F13/F15 are counted in `observatory_runs_total` with `result=discarded`
+and are recorded in **none** of the summaries: their behaviour is zeroed, not small, and
+feeding those zeros into a percentile invents a run nobody made.
+
 ### Cardinality rule
 
 **Never** put these into Prometheus labels:
@@ -78,7 +82,7 @@ Use Tempo or PostgreSQL for individual run details. Reasonable dimensions are:
 runtime=github|anthropic|openai|manual     # the run's runtime.provider, not the product
 variant=baseline|instructions|skill|agent
 benchmark_category=bugfix|feature|review|migration
-result=pass|fail
+result=pass|fail|discarded                 # discarded = F13/F15 infrastructure failure
 team=<small controlled set>
 ```
 
@@ -109,6 +113,11 @@ F06 insufficient tests            F14 safety/policy violation
 F07 unnecessary changes           F15 evaluator/infrastructure failure
 F08 hallucinated API/dependency
 ```
+
+**F13 and F15 are not agent failures.** They blame the harness or the environment, so the
+comparison endpoint and the Prometheus summaries exclude them — see *Reading a comparison
+honestly* below. Classifying a quota exhaustion as F03 instead would silently turn a
+billing problem into evidence against a variant; that mistake has already been made once.
 
 ---
 
@@ -145,3 +154,16 @@ Agent runs are non-deterministic: one successful run proves very little. The min
 learning sample is **5 runs per variant**, and 10 is a better first comparison. The
 comparison endpoint returns an explicit `warning` when a variant is below that threshold,
 and the Compare page renders it.
+
+**Not every recorded run measures the variant.** F13 (timeout/rate limit) and F15
+(evaluator/infrastructure failure) blame the harness or the environment: an exhausted
+quota measures the billing account, and a broken evaluator measures the instrument. The
+comparison endpoint excludes those runs from `passRate`, `acceptanceRate` and every
+median, and — the part that actually bit us — from the count checked against the 5-run
+minimum. A run that never executed must not make a variant look worse, nor make an
+under-powered arm look adequately sampled.
+
+They are not hidden either: each variant reports `infrastructureFailures`, shown on the
+Compare page as the *discarded (F13/F15)* row. `runs` is therefore the number of
+**measuring** runs, while `totalRuns` still counts everything recorded. Every other
+failure class stays in the aggregates — F03 is a result, not an accident.

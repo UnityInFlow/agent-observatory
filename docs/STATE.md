@@ -26,7 +26,11 @@ experiment could not conclude anything, and the F01–F15 taxonomy has never bee
 
 ## Recommended next sequence
 
-1. **[#19](https://github.com/UnityInFlow/agent-observatory/issues/19)** — exclude F13/F15 runs from aggregates and the sample-size warning. ~30 min. Every comparison so far has needed manual F13 filtering; the instrument still requires hand-correction.
+1. ~~**[#19](https://github.com/UnityInFlow/agent-observatory/issues/19)** — exclude F13/F15
+   runs from aggregates and the sample-size warning.~~ **Done.** `ComparisonService` now
+   partitions infrastructure failures out of every aggregate and out of the 5-run minimum,
+   and reports them as `infrastructureFailures` (Compare page: *discarded (F13/F15)*).
+   No more hand-correction of published numbers.
 2. **[benchmarks#6](https://github.com/UnityInFlow/agent-observatory-benchmarks/issues/6)** — BE-002. Authoring costs no agent quota.
 3. Re-run B0 vs B1 on BE-002 at **10 runs per variant** (§20) for the first evidence-based keep/reject decision.
 

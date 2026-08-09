@@ -36,9 +36,13 @@ export default function RunsPage() {
   }, [runs]);
 
   const visible = runs.filter((r) => {
-    if (result === 'pass') return r.evaluation?.passed === true;
-    if (result === 'fail') return r.evaluation != null && !r.evaluation.passed;
-    if (result === 'none') return r.evaluation == null;
+    const e = r.evaluation;
+    if (result === 'pass') return e?.passed === true;
+    // A discarded run is not a failed variant (#19). Keeping it out of the Fail filter is
+    // what stops the same run reading as "discarded" on Compare and "failed" here.
+    if (result === 'fail') return e != null && !e.passed && !e.infrastructureFailure;
+    if (result === 'discarded') return e?.infrastructureFailure === true;
+    if (result === 'none') return e == null;
     return true;
   });
 
@@ -83,6 +87,7 @@ export default function RunsPage() {
             <option value="">All</option>
             <option value="pass">Pass</option>
             <option value="fail">Fail</option>
+            <option value="discarded">Discarded (F13/F15)</option>
             <option value="none">Not evaluated</option>
           </select>
         </label>
@@ -129,6 +134,12 @@ export default function RunsPage() {
                 <td>
                   {run.evaluation == null ? (
                     <span className="badge none">not evaluated</span>
+                  ) : run.evaluation.infrastructureFailure ? (
+                    // Neither pass nor fail: the harness broke, so it gets the neutral badge
+                    // rather than the red one that accuses the agent.
+                    <span className="badge none" title="Infrastructure failure — excluded from comparisons">
+                      {run.evaluation.failureClass ?? 'DISCARDED'}
+                    </span>
                   ) : (
                     <span className={`badge ${run.evaluation.passed ? 'pass' : 'fail'}`}>
                       {run.evaluation.passed ? 'PASS' : run.evaluation.failureClass ?? 'FAIL'}

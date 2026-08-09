@@ -19,14 +19,21 @@ import org.springframework.stereotype.Component
 class ObservatoryMetrics(private val registry: MeterRegistry) {
 
     fun recordRun(run: AgentRun, evaluation: Evaluation, benchmarkCategory: String) {
+        // #19: an F13/F15 run is neither a pass nor a fail of the variant. Giving it its
+        // own `result` value keeps it on the dashboard without counting it as a defeat.
+        val discarded = evaluation.isInfrastructureFailure()
         val tags = Tags.of(
             "runtime", run.runtime.provider,
             "variant", run.variant,
             "benchmark_category", benchmarkCategory,
-            "result", if (evaluation.passed) "pass" else "fail",
+            "result", if (discarded) "discarded" else if (evaluation.passed) "pass" else "fail",
         )
 
         registry.counter("observatory.runs", tags).increment()
+
+        // Behaviour of a run that never executed is zeroed, not small. Feeding those zeros
+        // into the distributions would drag every percentile toward a number nobody ran.
+        if (discarded) return
 
         registry.counter(
             "observatory.tool.failures",

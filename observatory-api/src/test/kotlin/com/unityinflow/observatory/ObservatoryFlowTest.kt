@@ -79,7 +79,7 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
         return JsonPath.read(body, "$.runId")
     }
 
-    private fun evaluate(runId: String, passed: Boolean) {
+    private fun evaluate(runId: String, passed: Boolean, failureClass: String = "F03") {
         val exit = if (passed) 0 else 12
         mockMvc.perform(
             post("/api/runs/$runId/evaluation").contentType(MediaType.APPLICATION_JSON).content(
@@ -87,7 +87,7 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
                 {
                   "evaluatorVersion": "1.0.0",
                   "exitCode": $exit,
-                  "failureClass": ${if (passed) "null" else "\"F03\""},
+                  "failureClass": ${if (passed) "null" else "\"$failureClass\""},
                   "correctness": {
                     "buildPassed": true,
                     "testsPassed": true,
@@ -262,6 +262,106 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
             .andExpect(jsonPath("$.variants[1].passRate").value(1.0))
             .andExpect(jsonPath("$.variants[1].medianToolCalls").value(15.0))
             .andExpect(jsonPath("$.warning").isNotEmpty)
+    }
+
+    @Test
+    fun `excludes infrastructure failures from the aggregates and from the sample-size count`() {
+        registerBenchmark("BE-FLOW-9")
+        // baseline: 5 runs that all measure the variant — the arm is adequately sampled.
+        repeat(5) { evaluate(createRun("BE-FLOW-9", "EXP-INFRA", "baseline", 20, 180_000), passed = true) }
+        // instructions: 4 real runs plus one that aborted on an exhausted quota (F13).
+        listOf(10, 10, 12, 12).forEach {
+            evaluate(createRun("BE-FLOW-9", "EXP-INFRA", "instructions", it, 150_000), passed = true)
+        }
+        evaluate(
+            // A run that never executed: zeroed behaviour, F13. It measures the billing
+            // account, not `AGENTS.md`, so it must not touch a single number below.
+            createRun("BE-FLOW-9", "EXP-INFRA", "instructions", 0, 1_000),
+            passed = false,
+            failureClass = "F13",
+        )
+
+        mockMvc.perform(get("/api/experiments/EXP-INFRA/comparison"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalRuns").value(10))
+            .andExpect(jsonPath("$.variants[1].variant").value("instructions"))
+            // 5 runs recorded, 4 of them measuring.
+            .andExpect(jsonPath("$.variants[1].runs").value(4))
+            .andExpect(jsonPath("$.variants[1].infrastructureFailures").value(1))
+            .andExpect(jsonPath("$.variants[1].passRate").value(1.0))
+            .andExpect(jsonPath("$.variants[1].medianToolCalls").value(11.0))
+            .andExpect(jsonPath("$.variants[1].medianDurationMs").value(150_000.0))
+            // F13 is not a way the variant failed, so it is not in the taxonomy breakdown.
+            .andExpect(jsonPath("$.variants[1].failureClasses").isEmpty)
+            // §20: the discarded run must not make an under-powered arm look adequate.
+            .andExpect(jsonPath("$.warning").value(org.hamcrest.Matchers.containsString("instructions")))
+            .andExpect(
+                jsonPath("$.warning").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("baseline"))),
+            )
+            .andExpect(jsonPath("$.variants[0].variant").value("baseline"))
+            .andExpect(jsonPath("$.variants[0].runs").value(5))
+            .andExpect(jsonPath("$.variants[0].infrastructureFailures").value(0))
+    }
+
+    @Test
+    fun `an arm whose every run was discarded reports no rate at all, not zero`() {
+        registerBenchmark("BE-FLOW-12")
+        evaluate(createRun("BE-FLOW-12", "EXP-ALL-INFRA", "baseline", 20, 100_000), passed = true)
+        // The instructions arm never really ran: both attempts died on an exhausted quota.
+        repeat(2) {
+            evaluate(
+                createRun("BE-FLOW-12", "EXP-ALL-INFRA", "instructions", 0, 1_000),
+                passed = false,
+                failureClass = "F13",
+            )
+        }
+
+        mockMvc.perform(get("/api/experiments/EXP-ALL-INFRA/comparison"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.variants[1].variant").value("instructions"))
+            .andExpect(jsonPath("$.variants[1].runs").value(0))
+            .andExpect(jsonPath("$.variants[1].infrastructureFailures").value(2))
+            // A 0.0 here would render as 0% and hand the comparison to the other arm —
+            // no measurement dressed up as the worst possible result.
+            .andExpect(jsonPath("$.variants[1].passRate").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].acceptanceRate").doesNotExist())
+            .andExpect(jsonPath("$.variants[1].medianToolCalls").doesNotExist())
+            .andExpect(jsonPath("$.variants[0].passRate").value(1.0))
+    }
+
+    @Test
+    fun `marks an infrastructure failure on the run itself, so every screen agrees`() {
+        registerBenchmark("BE-FLOW-13")
+        val discarded = createRun("BE-FLOW-13", "EXP-RUN-FLAG", "baseline", 0, 1_000)
+        evaluate(discarded, passed = false, failureClass = "F13")
+        val genuine = createRun("BE-FLOW-13", "EXP-RUN-FLAG", "baseline", 12, 90_000)
+        evaluate(genuine, passed = false, failureClass = "F03")
+
+        mockMvc.perform(get("/api/runs/$discarded"))
+            .andExpect(jsonPath("$.evaluation.infrastructureFailure").value(true))
+        mockMvc.perform(get("/api/runs/$genuine"))
+            .andExpect(jsonPath("$.evaluation.infrastructureFailure").value(false))
+    }
+
+    @Test
+    fun `counts an infrastructure failure as discarded, not as a failed run, in prometheus`() {
+        registerBenchmark("BE-FLOW-10")
+        evaluate(
+            createRun("BE-FLOW-10", "EXP-INFRA-METRICS", "baseline", 0, 1_000),
+            passed = false,
+            failureClass = "F15",
+        )
+
+        val scrape = mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+
+        assert(scrape.contains("""result="discarded"""")) { "expected a discarded result series" }
+        // Its zeroed behaviour must stay out of the distributions — a run that never
+        // executed would otherwise drag every percentile toward a number nobody ran.
+        val leaked = scrape.lines()
+            .filter { it.contains("""result="discarded"""") && !it.startsWith("observatory_runs_") }
+        assert(leaked.isEmpty()) { "discarded run leaked into distributions: $leaked" }
     }
 
     @Test
