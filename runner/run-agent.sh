@@ -3,7 +3,7 @@
 # The benchmark runner — the reproducibility engine of chapter 00 §24.
 #
 #   1. select benchmark          7. start agent
-#   2. create clean worktree     8. wait for completion
+#   2. build the agent's repo    8. wait for completion
 #   3. generate run id           9. record diff
 #   4. capture tool versions    10. execute deterministic evaluator
 #   5. hash customization       11. persist normalized run + evaluation
@@ -78,57 +78,67 @@ curl -fsS "${API}/actuator/health" >/dev/null 2>&1 \
 # --- 3. run id -------------------------------------------------------------
 RUN_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
-# --- 2. clean worktree -----------------------------------------------------
+# --- 2. the repository the agent receives ----------------------------------
 BASELINE_SHA="$(git -C "$BENCHMARKS_REPO" rev-parse HEAD)" || die "cannot resolve baseline commit"
 WORKTREE="${TMPDIR:-/tmp}/observatory-run-${RUN_ID}"
-git -C "$BENCHMARKS_REPO" worktree add -q --detach "$WORKTREE" "$BASELINE_SHA" \
-  || die "cannot create worktree"
 
 cleanup() {
   if [[ "$KEEP_WORKTREE" == true ]]; then
     echo "  worktree kept at $WORKTREE"
   else
-    git -C "$BENCHMARKS_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    rm -rf "$WORKTREE"
   fi
 }
 trap cleanup EXIT
 
-# --- 2b. strip the worktree to what a developer would actually receive ------
+# --- 2b. build it from an allowlist, as its own repository ------------------
 # The benchmarks repository holds the graded acceptance suites, a known-good fixture and a
-# README describing each task's trap. All of it was landing in the tree handed to the
-# agent, and at least one run demonstrably read it: its summary named BE002FunctionalTest
-# and BE002ContractTest, filenames that exist nowhere else. That makes every affected run
-# a measurement of "can you find the answer file".
+# README describing each task's trap. None of it may reach the agent: a run that can read
+# the answer measures "can you find the answer file", and at least one demonstrably did —
+# its summary named BE002FunctionalTest and BE002ContractTest, filenames that exist nowhere
+# else.
 #
-# An allowlist, not a denylist: a denylist rots silently the first time a benchmark adds a
-# file, and this class of leak flatters the agent, so nobody investigates it.
+# This builds a *fresh repository* from an allowlist. It is deliberately not a checkout
+# with the authoring material deleted, which is what the first attempt at this did and why
+# that attempt failed: a git worktree shares the parent repository's object store, so from
+# inside the "stripped" tree `git show HEAD^:tasks/.../known-good/OrderController.kt`
+# still returned the model solution, and `git show --stat HEAD` listed the acceptance-suite
+# filenames in the setup commit's own diff. The material was hidden from `ls` and from
+# nothing else.
 #
-# Removing them is safe for evaluation. The evaluator runs from BENCH_DIR in the *main*
-# repository and copies its acceptance suites into the service at evaluation time; it
-# never reads them from the worktree.
+# `git archive` extracts only the allowlisted paths, so the rest never lands on disk, and
+# `git init` gives the tree a history of exactly one commit with no earlier state to
+# recover. An allowlist rather than a denylist because a denylist rots the first time a
+# benchmark adds a file, and this class of leak flatters the agent, so nobody investigates
+# it.
+#
+# Safe for evaluation: the evaluator runs from BENCH_DIR in the *main* repository and
+# copies its acceptance suites into the service at evaluation time. It never reads the
+# agent's tree for them.
 WORKTREE_KEEP=(sample-service .gitignore)
-strip_worktree() {
-  local entry base keep
-  for entry in "$WORKTREE"/* "$WORKTREE"/.[!.]*; do
-    [[ -e "$entry" ]] || continue
-    base="$(basename "$entry")"
-    [[ "$base" == ".git" ]] && continue
-    keep=false
-    for k in "${WORKTREE_KEEP[@]}"; do [[ "$base" == "$k" ]] && keep=true && break; done
-    [[ "$keep" == true ]] || rm -rf "$entry"
-  done
-}
-strip_worktree
-[[ -d "$WORKTREE/sample-service" ]] || die "strip removed the service under test"
+mkdir -p "$WORKTREE" || die "cannot create $WORKTREE"
+git -C "$BENCHMARKS_REPO" archive --format=tar "$BASELINE_SHA" -- "${WORKTREE_KEEP[@]}" \
+  | tar -x -C "$WORKTREE" \
+  || die "cannot extract the allowlisted paths at ${BASELINE_SHA:0:12}"
+[[ -d "$WORKTREE/sample-service" ]] || die "the allowlist did not yield the service under test"
 
-# Committed, not just deleted — otherwise every run's diff opens with the harness deleting
-# half the repository and the scope guard blames the agent for it. Same reason the
-# customization overlay below is committed before the agent starts.
+# One commit, so the agent's `git log` has somewhere to start and the diff below has
+# something to measure against. The customization overlay is committed the same way.
+git -C "$WORKTREE" init -q -b main || die "cannot initialise the agent's repository"
 git -C "$WORKTREE" add -A >/dev/null 2>&1
 git -C "$WORKTREE" -c user.email=runner@observatory -c user.name=observatory-runner \
-    commit -qm "experiment setup: strip benchmark authoring material from the worktree" \
-  || die "failed to commit the stripped worktree"
+    commit -qm "initial commit" \
+  || die "failed to commit the agent's starting state"
 STRIPPED_SHA="$(git -C "$WORKTREE" rev-parse HEAD)"
+
+# Assert the leak is closed rather than trust that it is. The previous version of this
+# looked correct for six merged PRs while handing over the answer key, and a leak that
+# flatters the agent produces passes, which nobody investigates. These cost milliseconds.
+[[ "$(git -C "$WORKTREE" rev-list --all --count)" == "1" ]] \
+  || die "the agent's repository has more than one commit; history could hold the answer key"
+if git -C "$WORKTREE" rev-list --all --objects | awk '{print $2}' | grep -q "^tasks/"; then
+  die "benchmark authoring material is reachable from the agent's git history"
+fi
 
 echo "=============================================================="
 echo " run        ${RUN_ID}"
