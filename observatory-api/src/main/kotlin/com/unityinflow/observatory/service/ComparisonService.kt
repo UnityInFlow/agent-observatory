@@ -121,6 +121,7 @@ class ComparisonService(
             medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
             medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
             medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
+<<<<<<< HEAD
             // Reads + creations: the whole cache footprint, which on a Claude run dwarfs
             // input+output by two orders of magnitude.
             medianCacheTokens = median(
@@ -133,6 +134,8 @@ class ComparisonService(
             medianCacheCreationTokens =
                 median(measured.mapNotNull { it.efficiency.cacheCreationTokens?.toDouble() }),
             medianEstimatedCost = median(measured.mapNotNull { it.efficiency.estimatedCost?.toDouble() }),
+=======
+>>>>>>> origin/main
             medianDurationMs = median(measured.mapNotNull { it.efficiency.durationMs?.toDouble() }),
             medianRetries = median(measured.map { it.behavior.retries.toDouble() }),
             meanUnrelatedFilesChanged =
