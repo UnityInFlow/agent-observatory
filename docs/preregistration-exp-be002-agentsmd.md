@@ -646,9 +646,36 @@ file was written for a different task months earlier and still cost nothing in c
 compounds — several endpoints, or a second change layered onto the first. That is the
 experiment this result argues for, and it is a Chapter 01 question.
 
-## One caveat that is not resolved
+## Two caveats that are not resolved
 
-`~/.claude/settings.json` still reaches the agent, so operator permission rules are inherited
-by every run. It is constant across both arms, so it does not bias this comparison, but it
-means "baseline" here is not a pristine Claude Code — it is Claude Code with this machine's
-permission rules. Tracked separately from #13.
+**Operator settings still reach the agent.** `~/.claude/settings.json` is inherited by every
+run, so "baseline" here is not a pristine Claude Code — it is Claude Code with this machine's
+permission rules. Constant across both arms, so it does not bias the comparison. Tracked
+separately from #13.
+
+**Hooks are not isolated either, and this was found after the result was written up.**
+`--strict-mcp-config` and `--disable-slash-commands` do not cover hooks: 21 are registered on
+this machine and they execute on every run (issue #49).
+
+Measured over the 20 measuring runs, hook executions per run were:
+
+| | hook executions | tool calls | hooks per tool call |
+|---|---:|---:|---:|
+| baseline | 16.0 | 15.5 | 1.03 |
+| instructions | 18.5 | 19.5 | 0.95 |
+
+**The per-tool-call rate is the same in both arms**, so hooks are not a differential
+contaminant and the comparison is not biased by them — the +15.6% more hook executions in the
+treatment arm is a consequence of it making 25.8% more tool calls, not of hooks behaving
+differently under the treatment.
+
+What it does mean is that the **absolute** figures describe this machine. Every run carried
+roughly one hook execution per tool call, and that overhead is inside the $0.1301 and $0.1809.
+Whether removing it would narrow the +39% gap, widen it, or leave it alone is **untested**:
+it depends on the per-execution cost of these particular hooks relative to the model work, and
+that was never measured. Stating it as an "upper bound" would be a guess with a direction
+attached, which is the habit this registration exists to break.
+
+The check that should exist and does not: a run of both arms with hooks disabled, comparing
+the gap rather than the levels. That is one batch and it is the obvious first item for
+whoever picks #49 up.
