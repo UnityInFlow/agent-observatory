@@ -69,11 +69,16 @@ jq -s -c --arg runId "$RUN_ID" '
   | ($tools     | map(select(bool("success") == false)))           as $toolErrors
   | ($decisions | map(select(str("decision") != "accept")))        as $denials
 
-  # The local environment, counted rather than assumed. No flag combination removes
-  # user hooks while keeping CLAUDE.md auto-discovery and keychain auth (issue #49), so the
-  # next best thing is to record what actually loaded and let the analysis prove it did not
-  # vary between arms. An uncontrolled variable that is measured and constant is survivable;
-  # one that is merely hoped to be constant is what voided five experiments.
+  # The local environment, counted rather than assumed (issue #49). --setting-sources project
+  # does remove the user hooks while leaving CLAUDE.md discovery intact, and the runner exposes
+  # it as --isolate-user-settings; an earlier version of this comment claimed no flag could do
+  # that, which was wrong. Counting is still needed, for two reasons: the flag is off by
+  # default so "baseline" is not silently redefined between experiments, and a flag that is
+  # believed to work is not the same as one observed to have worked on the run in hand.
+  #
+  # Note hooksRegistered does NOT fall to zero under isolation — registration events still
+  # emit while nothing executes. hookExecutions is the symptom that actually moves, so it is
+  # the one a manipulation check should assert on.
   | ($records | map(select(str("event.name") == "hook_registered")))       as $hooksReg
   | ($records | map(select(str("event.name") == "hook_execution_start")))  as $hookExec
   | ($records | map(select(str("event.name") == "plugin_loaded")))         as $plugins

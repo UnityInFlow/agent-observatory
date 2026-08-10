@@ -3,21 +3,34 @@
 
     runner/check-environment-constancy.py EXP-BE002-CLAUDEMD-V2
 
-Issue #49: no flag combination removes user-scope hooks while keeping CLAUDE.md
-auto-discovery and keychain auth. `--bare` and `--safe-mode` both disable CLAUDE.md, which
-is the treatment; `CLAUDE_CONFIG_DIR` relocates the account store and breaks keychain OAuth;
-`--settings` merges rather than replaces, so an empty hooks block does not subtract anything.
-All four were probed against 2.1.226 on 2026-08-10.
+Issue #49. `--setting-sources project` removes user-scope hooks while leaving CLAUDE.md
+auto-discovery and keychain auth intact; the runner exposes it as `--isolate-user-settings`.
+An earlier version of this docstring said no flag could do that. It was wrong — the probes
+behind that claim covered `--bare`, `--safe-mode`, `CLAUDE_CONFIG_DIR` and `--settings`, and
+simply missed `--setting-sources`. Those four findings still hold and are worth keeping:
 
-So the hooks cannot currently be removed. They can be *counted*, and that is the difference
-between an uncontrolled variable and a controlled one. This script reads the collector's
-events and asserts that the environment composition — hooks registered, plugins loaded — was
-identical on every measuring run. If it was, the comparison survives the contamination: a
-constant offset shifts both arms and cannot manufacture a difference between them.
+    --bare             skips hooks and CLAUDE.md discovery — switches off the treatment
+    --safe-mode        disables all customizations, CLAUDE.md included
+    CLAUDE_CONFIG_DIR  relocates the account store, breaking keychain OAuth
+    --settings         merges rather than replaces; an empty hooks block subtracts nothing
 
-It deliberately does NOT assert on hook *executions*. Those fire per tool call, so they track
-whatever the treatment does to tool use; demanding they be equal would be demanding the
-treatment have no effect. They are reported so the size of the effect is visible.
+Counting is still required, because isolation is off by default so "baseline" is not silently
+redefined between experiments, and because a flag believed to work is not a flag observed to
+have worked on the run in hand. EXP-BE002-NOHOOKS is the demonstration: hooks were worth ~13%
+of every run and sat on both arms equally, so the premium moved 0.9pp when they were removed.
+
+This script asserts the environment *composition* was identical on every measuring run. A
+constant offset shifts both arms and cannot manufacture a difference between them, so a
+contaminated-but-constant experiment is still interpretable; a drifting one is not.
+
+Two things it deliberately does not do:
+
+  - It does not assert hook *executions* are equal across arms. Those fire per tool call, so
+    they track whatever the treatment does to tool use; demanding equality would demand the
+    treatment have no effect. They are reported so the size is visible.
+  - It does not treat hooksRegistered as the isolation symptom. Registration events still
+    emit under --isolate-user-settings while nothing executes — the observed signature is
+    20 registered, 0 executed. Executions are what a manipulation check should assert on.
 
 Exit 0 if composition is constant, 1 if it drifted — drift means the runs were not comparable
 and the experiment needs re-collecting, not re-interpreting.
@@ -129,10 +142,16 @@ def main():
 
     print()
     print("  executions per arm (reported, not asserted — these track the treatment)")
+    total_exec = 0
     for arm in sorted(executions):
         vals = sorted(executions[arm])
-        median = vals[len(vals) // 2] if vals else 0
-        print(f"    {arm:<14} n={len(vals):<3} median={median:<5} range={vals[0]}–{vals[-1]}")
+        # True median, averaging the two middle values on an even count. Taking the upper
+        # one instead reported 25/33 where the arm medians are 24.5/31.5 — small, but these
+        # numbers get published, and a median that rounds itself up is a wrong median.
+        mid = len(vals) // 2
+        median = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+        total_exec += sum(vals)
+        print(f"    {arm:<14} n={len(vals):<3} median={median:<7} range={vals[0]}–{vals[-1]}")
 
     print()
     if len(signatures) > 1:
@@ -145,8 +164,15 @@ def main():
         return 1
     sig = next(iter(signatures))
     print(f"VERDICT: CONSTANT — every run loaded {sig[0]} hooks and {sig[1]} plugins.")
-    print("The contamination is a fixed offset on both arms, so it cannot manufacture a")
-    print("difference between them. It still inflates absolute cost — see issue #49.")
+    if total_exec == 0:
+        # Registration without execution is what isolation looks like: the events still emit,
+        # nothing runs. Reporting "contamination" here would be reporting the wrong symptom.
+        print("No hook executed on any run, so the arms carry no hook overhead at all —")
+        print("consistent with --isolate-user-settings. This is the clean case.")
+    else:
+        print("Hooks executed on these runs, so both arms carry that overhead. Being constant,")
+        print("it cannot manufacture a difference between them, but it does inflate absolute")
+        print("cost — EXP-BE002-NOHOOKS measured that at ~13% per run. See issue #49.")
     return 0
 
 
