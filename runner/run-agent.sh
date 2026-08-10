@@ -393,6 +393,7 @@ echo "---------------------------------------------------------------"
 INFRA_SIGNATURE="no quota|quota exceeded|rate limit|too many requests|not authenticated"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|401 unauthorized|api error|connection closed|connection reset"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|502 bad gateway|503 service unavailable|overloaded_error|network error"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|session limit|usage limit|limit reached|insufficient credit"
 
 AGENT_ABORTED=false
 ABORT_REASON=""
@@ -437,6 +438,27 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     # reappear, not by the story that motivated it — so the symptom is checked on every run
     # from now on. If a skill executes despite --disable-slash-commands, the run measured
     # the operator's plugins as well as the variant, and it is not evidence about either.
+    # The signature list above is a convenience for *naming* the cause, and it will always
+    # be incomplete: it was extended for "API Error" and the very next batch died on
+    # "You've hit your session limit", a phrase it did not contain. Sixteen runs recorded
+    # F03 "incorrect code" for a billing state. That is the fourth costume of the same bug,
+    # and the fourth time it was fixed per-phrase instead of per-class.
+    #
+    # So the deciding rule is not a phrase. An agent that changed no file *and called no
+    # tool* did not attempt the task and cannot have failed it — nothing it did was
+    # measured, because it did nothing. Whatever stopped it was environmental by
+    # construction. This needs no vocabulary and does not go stale.
+    #
+    # It stays narrow on purpose. A run that explored and then stalled has tool calls, so it
+    # is untouched and keeps counting against its arm — which is what must happen when the
+    # thing under test is what made the agent hesitate.
+    TOOL_CALLS_SEEN="$(jq -r '.behavior.toolCalls // 0' <<<"$TELEMETRY")"
+    if [[ "$PRODUCED_NOTHING" == true && "${TOOL_CALLS_SEEN:-0}" -eq 0 && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F13"
+      ABORT_REASON="the agent changed no file and called no tool — it never acted"
+    fi
+
     SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"
     if [[ "${SKILL_CALLS:-0}" -gt 0 ]]; then
       AGENT_ABORTED=true
@@ -449,6 +471,14 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     fi
   else
     echo "    no telemetry found — behaviour metrics stay empty rather than guessed"
+    # Amendment 1(3): missing telemetry is not a measurement of zero. Combined with an empty
+    # diff there is nothing here to score either way, so the run is excluded rather than
+    # entered as a maximally cheap failure.
+    if [[ "$PRODUCED_NOTHING" == true && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="no telemetry and no file changed — nothing about this run was measured"
+    fi
   fi
 fi
 
