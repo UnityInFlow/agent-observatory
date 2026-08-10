@@ -531,3 +531,124 @@ instruction file is unchanged and still hashes to `sha256:13a7b6af…`; §32 for
 in response to results, and nothing here is a result.
 
 The 23 void runs stay in the database. They are the evidence for bug #13.
+
+---
+
+# Result — `EXP-BE002-CLAUDEMD-V2`, 2026-08-10
+
+The first result this project has produced that is not void.
+
+```
+VERDICT: INCONCLUSIVE — cost change +39% (p=0.00) does not clear the registered bar
+```
+
+`INCONCLUSIVE` is the correct verdict and a slightly misleading word for what happened. The
+registered rule has three outcomes: `KEEP` needs the primary metric to **improve** beyond its
+MDE, `REJECT` needs F02 to increase, and everything else is `INCONCLUSIVE`. Cost moved beyond
+its MDE with p < .01 — in the **wrong direction** — and F02 stayed at zero in both arms, so
+neither named branch fires. The number is not ambiguous; the rule simply has no branch for
+"the treatment is significantly worse on the primary metric without harming correctness".
+That gap is noted, not patched, because patching a decision rule with its result on screen is
+the thing this registration exists to prevent.
+
+## Dataset
+
+10 + 10 measuring runs, **arms interleaved** rather than run in blocks, after the V1 batch
+showed infrastructure trouble clustering in time and landing unevenly across arms. 16 further
+runs were discarded F13 (a session limit mid-batch) and replaced, as the registration
+requires. Every run: same benchmark, runtime, model and baseline commit; `instructionsHash`
+set on all 10 treatment runs and null on all 10 baseline runs; **zero skill activations**, so
+the harness bug #13 fix held across the whole batch.
+
+| metric | baseline | instructions | change | p | vs MDE |
+|---|---:|---:|---:|---:|---|
+| **cost** (primary) | $0.1301 | $0.1809 | **+39.0%** | <0.01 | beyond 24% |
+| cache tokens | 571 k | 805 k | +41.0% | 0.01 | beyond 32% |
+| model calls | 16.5 | 21 | +27.3% | 0.01 | — |
+| tool calls | 15.5 | 19.5 | +25.8% | 0.01 | below 36% |
+| duration | 90 s | 125 s | +38.9% | <0.01 | below 175% |
+| pass rate | **100%** | **100%** | — | — | — |
+| F02 error-contract | 0 | 0 | — | — | — |
+| F07 scope | 0 | 0 | — | — | — |
+
+## The predictions did well: three of four held
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | F02 increases in B1; two or more means the stale convention is actively harming | **Wrong.** Zero in both arms. The convention did not damage the error contract. |
+| 2 | F07 scope failures decrease or stay at zero | **Held.** Zero in both arms. |
+| 3 | Cost increases slightly, because the file is extra context and cache creation carries it | **Held on direction, wrong on magnitude and on mechanism.** +39% is not "slightly", and see below. |
+| 4 | Net pass rate not obviously better | **Held.** 100% against 100% — identical, not merely indistinguishable. |
+
+Three of four, against one of four for the void V3. Predictions written before the data are
+worth writing.
+
+## What the instruction file actually did
+
+The effect is not statistical. It is deterministic, and it is the qualitative result the
+registration said this experiment was really about:
+
+- **baseline, 10 of 10 runs:** changed **`OrderController.kt` only** — the amount check
+  hand-rolled inline in the controller.
+- **instructions, 10 of 10 runs:** changed **`Order.kt` + `OrderController.kt` +
+  `GlobalExceptionHandler.kt`** — `@Positive` on the request DTO, `@Valid` on the controller
+  parameter, and a `MethodArgumentNotValidException` handler.
+
+Zero crossover in 20 runs. That is the `CLAUDE.md` "Conventions" section being followed
+literally: *"Request validation belongs at the API boundary, using `jakarta.validation`
+annotations on the request DTO plus `@Valid` on the controller parameter."* Both files already
+exist in the fixture, so the treatment arm modifies them rather than inventing them.
+
+**The instruction file works exactly as written.** It bought a more idiomatic, more
+conventional implementation, and on this task that implementation cost 39% more for an
+outcome the evaluator scores identically — 7/7 acceptance criteria, 100% pass, either way.
+
+## Prediction 3 named the right direction and the wrong cause
+
+The registration attributed the expected cost rise to the file itself: *"extra context on
+every request, and cache creation carries it."* Median tokens say that is the smallest
+component.
+
+| | baseline | instructions | change |
+|---|---:|---:|---:|
+| cache **creation** tokens — carrying the file | 25 239 | 30 530 | +21% |
+| cache **read** tokens — more turns | 546 131 | 773 835 | +42% |
+| output tokens — more writing | 5 507 | 8 258 | +50% |
+| added lines — a bigger change | 26 | 40 | +54% |
+
+Carrying `CLAUDE.md` costs about 5 300 cache-creation tokens per run. The rest of the increase
+is the agent doing genuinely more work, because the file told it to solve the problem a more
+thorough way. Cost per tool call rose about 10% while tool calls rose 26%, so roughly two
+thirds of the cost premium is extra work and one third is heavier context per step. That
+decomposition is descriptive and was not registered; it is a reading of the result, not a
+test.
+
+This distinction matters for anyone acting on the finding. "Instruction files cost more
+because they are extra context" implies the fix is a shorter file. That is mostly wrong here.
+The cost is the behaviour the file prescribes, and a shorter file that still prescribed the
+annotation approach would cost approximately the same.
+
+## What this does and does not support
+
+**Supported.** On this task, this file, this model: the instruction file reliably changes the
+implementation strategy, produces no measurable correctness benefit, and costs significantly
+more. If cost matters and the conventional structure does not, it does not pay for itself
+here.
+
+**Not supported.** That instruction files are not worth it generally. BE-002 is a small
+single-endpoint validation fix where the idiomatic solution and the quick one are both
+correct — close to the worst case for a conventions file, since conventions buy consistency
+across a codebase over time and this task has neither. The prediction that a stale convention
+would break the error contract was **wrong**, and that is the more interesting negative: the
+file was written for a different task months earlier and still cost nothing in correctness.
+
+**Untested.** Whether the treatment's structure pays off on a task where the difference
+compounds — several endpoints, or a second change layered onto the first. That is the
+experiment this result argues for, and it is a Chapter 01 question.
+
+## One caveat that is not resolved
+
+`~/.claude/settings.json` still reaches the agent, so operator permission rules are inherited
+by every run. It is constant across both arms, so it does not bias this comparison, but it
+means "baseline" here is not a pristine Claude Code — it is Claude Code with this machine's
+permission rules. Tracked separately from #13.

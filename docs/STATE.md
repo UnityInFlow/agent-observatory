@@ -4,111 +4,104 @@ Handoff note. Read this first when picking the work back up.
 
 ---
 
-## RESUME HERE — 2026-08-10 (later)
+## RESUME HERE — 2026-08-10 (end of day)
 
-**`EXP-BE002-CLAUDEMD` is void — harness bug #13 — and `EXP-BE002-CLAUDEMD-V2` is
-collecting under the fix.** Void notice and full reasoning are in
-[`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md), "Void (3)".
+**`EXP-BE002-CLAUDEMD-V2` produced this project's first non-void result.** Full write-up in
+[`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md), "Result —
+`EXP-BE002-CLAUDEMD-V2`".
 
-### Why it is void
+```
+VERDICT: INCONCLUSIVE — cost change +39% (p=0.00) does not clear the registered bar
+```
 
-The runner never isolated the agent from `~/.claude/`. It passed `--strict-mcp-config`,
-whose own comment argues that user-scope config makes "the plain baseline vary by machine",
-and left the identical hole open for **plugins and their skills**.
+10 + 10 measuring runs, arms **interleaved**, zero skill contamination, `instructionsHash`
+set on all 10 treatment runs and null on all 10 baseline runs.
 
-A plugin skill executed in **5 of the 23 runs**. One answered a bugfix task by writing
-`docs/superpowers/plans/…md` and changed no production file. The three contaminated
-*passing* runs hold the three highest tool counts in their arm — and tool calls and cost are
-both registered outcomes.
+| metric | baseline | instructions | change | p |
+|---|---:|---:|---:|---:|
+| **cost** (primary) | $0.1301 | $0.1809 | **+39.0%** | <0.01 |
+| cache tokens | 571 k | 805 k | +41.0% | 0.01 |
+| tool calls | 15.5 | 19.5 | +25.8% | 0.01 |
+| pass rate | 100% | 100% | — | — |
+| F02 / F07 | 0 / 0 | 0 / 0 | — | — |
 
-`customization.skillsHash` was `null` on all 23 runs because it hashes `.github/skills.md`
-*inside the worktree*, a path that cannot exist there. A null hash is not a missing claim,
-it is the claim "this run had no skills", and it was false every time.
+`INCONCLUSIVE` is correct by the letter of the rule and a misleading word for it. `KEEP`
+needs cost to **improve** beyond MDE; `REJECT` needs F02 to increase. Cost moved beyond its
+MDE with p < .01 in the **wrong** direction and F02 stayed at zero, so neither branch fires.
+The rule has no branch for "significantly worse on the primary metric, without harming
+correctness". Noted, deliberately not patched — patching a decision rule with its result on
+screen is what the registration exists to prevent. **Fix it before the next experiment.**
 
-### The adjudication that was nearly published
+### The finding, which is not statistical
 
-`899232bb` explored, cited the CLAUDE.md guidance, proposed exactly the change the passing
-treatment runs made, then asked *"Should I proceed?"* and stalled. It was written up as
-**F12, a treatment-linked deliberation stall** — the *cautious* reading, since it kept a
-failure in the treatment arm instead of discarding it.
+Zero crossover in 20 runs:
 
-Its telemetry then showed **4 skill activations**, the same count as the run that wrote a
-plan instead of code. A leaked skill explains the stall at least as well, and these data
-cannot separate the two. The F12 adjudication is withdrawn.
-
-Being biased against yourself is still being biased. The check is whether an explanation
-survives evidence gathered to test it — not whether it flatters or damns.
-
-### What is in place now (commit `222aa6c`, pushed 10:40:39Z before any V2 run)
-
-- `--disable-slash-commands` alongside `--strict-mcp-config`. Verified: `CLAUDE.md` is still
-  read, so the treatment stays detectable, and the canary passes under it.
-- `canary.sh` launches with **identical flags** to the runner. It previously certified a
-  configuration the runner did not use, so it would have passed throughout bug #13.
-- **Every run asserts on the symptom**: if the `Skill` tool executed at all, the run is
-  recorded F15 and excluded. A fix is confirmed by the symptom not reappearing, not by the
-  story that motivated it.
-- Infrastructure aborts classified at record time — `API Error`, `Connection closed`,
-  `Connection reset`, 502, 503, overloaded — **gated on the agent having produced no file**.
-  That gate matters: 7 of the 16 runs that shipped working code also contain an
-  infrastructure string in their logs, and a log-only match would have discarded them.
-- `analyze-experiment.py --reviewed-unattempted RUNID` — per-run, errors on a stale or
-  already-attempted id, echoes every id above the metric table.
-- `reclassify-run.py` — corrects a failure class, can never touch a measurement, requires a
-  written reason it stores on the run as a human review.
-
-### Next actions, in order
-
-1. Wait for `EXP-BE002-CLAUDEMD-V2` — 10 + 10, **interleaved** baseline/instructions rather
-   than run in blocks, because the overnight instability that hit V1 clustered in time and
-   landed unevenly across arms. Batch log is in the session scratchpad; check with:
-   `curl -fsS http://localhost:8081/api/runs | jq -r '[.[]|select(.experimentKey=="EXP-BE002-CLAUDEMD-V2")]|length'`
-2. Confirm zero skill contamination across the arm — the F15 assertion should never fire.
-   First two runs: 0 skill events, correct treatment signature.
-3. `python3 runner/analyze-experiment.py EXP-BE002-CLAUDEMD-V2`. The `KEEP` bar is
-   Amendment 2's 24%, derived from a clean B0 arm and unaffected by any void.
-4. Write the result into the registration and PR `exp/be002-claudemd`.
-
-### The treatment effect is real and mechanistic, whatever the verdict says
-
-Across V1's 16 uncontaminated runs and both V2 runs so far, the split is perfect and
-deterministic:
-
-- **baseline** changes **`OrderController.kt` only** — validation hand-rolled inline.
-- **instructions** changes **`Order.kt` + `OrderController.kt` + `GlobalExceptionHandler.kt`**
-  — `@Positive` on the request DTO, `@Valid` on the controller parameter, a
+- **baseline, 10/10** — changed **`OrderController.kt` only**, validation hand-rolled inline.
+- **instructions, 10/10** — changed **`Order.kt` + `OrderController.kt` +
+  `GlobalExceptionHandler.kt`**: `@Positive` on the DTO, `@Valid` on the parameter, a
   `MethodArgumentNotValidException` handler.
 
-That is the `CLAUDE.md` "Conventions" section being followed literally: *"Request validation
-belongs at the API boundary, using `jakarta.validation` annotations on the request DTO plus
-`@Valid`."* Both files already exist in the fixture; the treatment arm modifies them rather
-than creating them. Whatever the cost verdict, the instruction file demonstrably changes
-*how* the agent solves the task.
+That is the `CLAUDE.md` Conventions section followed literally. **The instruction file works
+exactly as written** — it buys a more idiomatic implementation, and on this task that costs
+39% more for an outcome the evaluator scores identically.
 
-### Still open
+Prediction 3 called the direction and the wrong cause. Carrying the file is ~5 300
+cache-creation tokens (+21%); output tokens rose 50% and added lines 54%. Roughly two thirds
+of the premium is the *extra work the file prescribes*, one third is heavier context. So "use
+a shorter file" would not recover it.
 
-- `~/.claude/settings.json` still reaches the agent, so operator permission rules are
-  inherited. Narrower than #13 and tracked, not fixed.
-- `64e2560d` (V1) stored `taskAttempted`/`productionFilesChanged` as null — it ran against
-  an API image predating those fields and Spring dropped them silently.
+Three of four predictions held, against one of four for the void V3.
+
+### Next actions
+
+1. PR the branch `exp/be002-claudemd` (4 commits, pushed). It carries the void notice, the
+   bug #13 fix, the class-based abort rule, and this result.
+2. **Add a `REJECT`-on-significantly-worse branch to the decision rule**, registered before
+   the next experiment exists — not retrofitted to this one.
+3. The experiment this result argues for: a task where the idiomatic structure *compounds*
+   — several endpoints, or a second change layered on the first. BE-002 is close to the worst
+   case for a conventions file, since conventions buy consistency the task never exercises.
+4. Still open: `~/.claude/settings.json` reaches the agent, so operator permission rules are
+   inherited. Constant across arms so it does not bias this result, but "baseline" is not a
+   pristine Claude Code. Narrower than #13, tracked, not fixed.
+
+### Two bugs found today, and the second one bit twice
+
+**#13 — the runs were not isolated.** `--strict-mcp-config` was passed, with a comment
+arguing that user-scope config makes "the plain baseline vary by machine". The identical hole
+for **plugins and their skills** was open. A plugin skill executed in 5 of 23 V1 runs; one
+answered a bugfix task by writing `docs/superpowers/plans/…md` and changed no production
+file. `skillsHash` was `null` on every run because it hashes `.github/skills.md` *inside the
+worktree*, a path that cannot exist there — a field structurally incapable of reporting the
+problem it appeared to rule out. This voided `EXP-BE002-CLAUDEMD` and withdrew an F12
+adjudication that was one commit from being published.
+
+**#2, fourth costume.** The infrastructure detector was extended for `API Error` and
+`Connection closed`. The very next batch died on `You've hit your session limit`, a phrase it
+did not contain, and 16 runs recorded F03 "incorrect code" for a billing state. The fix is no
+longer a phrase: **an agent that changed no file and called no tool did not attempt the task
+and cannot have failed it.** That needs no vocabulary and does not go stale. It stays narrow
+— a run that explored and then stalled has tool calls, so it still counts against its arm.
 
 ### Infrastructure gotchas
 
+- **Session limit resets on a wall clock** (`resets 1pm (Europe/Prague)` observed). A 20-run
+  batch is roughly the budget; expect to split larger ones.
 - **Colima's port forwarding wedges**: containers healthy inside the VM, every host port
   dead. `colima restart`, then start containers by hand — **none have a restart policy**,
   including `grafana-*` and `ai-portfolio-rabbitmq-1`, which are not this project's.
-- **`make build-api` before `docker compose up --build`**, and rebuild after any migration.
-  Spring silently ignores unknown JSON fields, so a stale image drops new evaluation fields
-  while the guard looks like it works.
+- **`make build-api` before `docker compose up --build`**. Spring silently ignores unknown
+  JSON fields, so a stale image drops new evaluation fields while the guard looks like it
+  works.
 
 ---
 
-## Status: instrument works, no experiment has ever produced a valid result
+## Status: the instrument works, and has now produced one valid result
 
 Chapter 00 M0–M10 is built, tested and merged. `make up && make demo` works. The instrument
 was hardened substantially on 2026-08-09.
 
-**Five experiments attempted. All five void.**
+**Six experiments attempted. Five void; the sixth is the result above.**
 
 | experiment | why it is void |
 |---|---|
