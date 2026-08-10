@@ -69,6 +69,15 @@ jq -s -c --arg runId "$RUN_ID" '
   | ($tools     | map(select(bool("success") == false)))           as $toolErrors
   | ($decisions | map(select(str("decision") != "accept")))        as $denials
 
+  # The local environment, counted rather than assumed. No flag combination removes
+  # user hooks while keeping CLAUDE.md auto-discovery and keychain auth (issue #49), so the
+  # next best thing is to record what actually loaded and let the analysis prove it did not
+  # vary between arms. An uncontrolled variable that is measured and constant is survivable;
+  # one that is merely hoped to be constant is what voided five experiments.
+  | ($records | map(select(str("event.name") == "hook_registered")))       as $hooksReg
+  | ($records | map(select(str("event.name") == "hook_execution_start")))  as $hookExec
+  | ($records | map(select(str("event.name") == "plugin_loaded")))         as $plugins
+
   | {
       # Only some records carry a trace context — the pre-session ones (plugin_loaded,
       # hook_registered) are emitted before a span is open and serialize traceId as "".
@@ -100,6 +109,14 @@ jq -s -c --arg runId "$RUN_ID" '
                         | if $c > 0 then ($c * 1000000 | round) / 1000000 else null end)
       },
       model: ($api | map(str("model")) | map(select(. != null)) | (.[0] // null)),
+      # Counted per run so drift is detectable. hookExecutions scales with tool calls and so
+      # tracks the treatment; hooksRegistered and pluginsLoaded are the composition and must
+      # be identical across every run of an experiment for its comparison to mean anything.
+      environment: {
+        hooksRegistered: ($hooksReg | length),
+        hookExecutions:  ($hookExec | length),
+        pluginsLoaded:   ($plugins  | length)
+      },
       toolBreakdown: (
         $tools | map(str("tool_name") // "unknown")
         | group_by(.) | map({tool: .[0], calls: length}) | sort_by(-.calls)
