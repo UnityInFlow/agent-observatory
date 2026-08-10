@@ -661,16 +661,23 @@ Measured over the 20 measuring runs, hook executions per run were:
 
 | | hook executions | tool calls | hooks per tool call |
 |---|---:|---:|---:|
-| baseline | 16.0 | 15.5 | 1.03 |
-| instructions | 18.5 | 19.5 | 0.95 |
+| baseline | 24.5 | 15.5 | 1.58 |
+| instructions | 31.5 | 19.5 | 1.62 |
 
 **The per-tool-call rate is the same in both arms**, so hooks are not a differential
-contaminant and the comparison is not biased by them — the +15.6% more hook executions in the
+contaminant and the comparison is not biased by them — the +28.6% more hook executions in the
 treatment arm is a consequence of it making 25.8% more tool calls, not of hooks behaving
 differently under the treatment.
 
+*(These counts were first published as 16.0 and 18.5, from `grep -c` over the event log. The
+collector batches many records per line, so that counted batches and undercounted executions
+by roughly a third. Corrected by counting `claude_code.hook_execution_start` records. The
+per-tool-call conclusion is unchanged — 1.58 against 1.62 rather than 1.03 against 0.95 — but
+the published numbers were wrong and a line-counting habit is worth naming, since the same
+mistake would silently deflate any per-run event count measured this way.)*
+
 What it does mean is that the **absolute** figures describe this machine. Every run carried
-roughly one hook execution per tool call, and that overhead is inside the $0.1301 and $0.1809.
+roughly 1.6 hook executions per tool call, and that overhead is inside the $0.1301 and $0.1809.
 Whether removing it would narrow the +39% gap, widen it, or leave it alone is **untested**:
 it depends on the per-execution cost of these particular hooks relative to the model work, and
 that was never measured. Stating it as an "upper bound" would be a guess with a direction
