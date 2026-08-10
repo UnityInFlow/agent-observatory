@@ -2,6 +2,91 @@
 
 Handoff note. Read this first when picking the work back up.
 
+---
+
+## RESUME HERE — 2026-08-10
+
+**`EXP-BE002-CLAUDEMD` has 20/20 runs collected and is waiting on one decision.**
+
+This is the AGENTS.md experiment re-run with the instruction file named `CLAUDE.md`, which
+is what Claude Code actually reads. V3 was void because it used `AGENTS.md` and the model
+never saw it. Predictions are the four in
+[`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md), untested
+to date.
+
+### Integrity of this run, already verified
+
+- registration committed **and pushed at 18:06:49Z**, before the first run — commit `06b1dd6`
+- `experiments/claude-md-v1/CLAUDE.md` is byte-identical to `agents-md-v1/AGENTS.md`,
+  `sha256:13a7b6af…` — §32 holds, it was renamed and not edited
+- `runner/canary.sh` PASS immediately before launch and again after a mid-run restart
+- treatment confirmed applied: `instructionsHash` is null across all baseline runs and
+  `sha256:13a7b6af…` across all instructions runs
+
+### The analyzer refuses to score it, on purpose
+
+```
+REFUSING to analyse 'EXP-BE002-CLAUDEMD': this is not the registered dataset.
+  - arm 'baseline' has 2 run(s) that changed no production file
+  - arm 'instructions' has 2 run(s) that changed no production file
+```
+
+Four runs produced no production file. They are **not** the same thing:
+
+| run | arm | duration | cause |
+|---|---|---:|---|
+| `f5907498` | instructions | 2650 s | `API Error: Connection closed mid-response` |
+| `17b1c2fd` | baseline | 4063 s | `API Error: Connection closed mid-response` |
+| `9f841c82` | baseline | 1224 s | `API Error: Connection closed mid-response` |
+| `899232bb` | instructions | **10575 s** | no API error — the agent asked permission and hung |
+
+### The decision to make
+
+**Three are infrastructure.** A dropped Anthropic connection recorded as **F03 incorrect
+code** is harness bug #12, and the third costume of bug #2 (quota → F03, permission block →
+F05, dropped connection → F03). Under the registered rules they are F13/F15: discarded and
+**replaced** by fresh runs. The runner does not yet detect the signature.
+
+**One is not, and this is the judgement call.** `899232bb` is in the *treatment* arm, has no
+API error, ran 2.9 hours, and ended:
+
+> *"…aligns with the CLAUDE.md guidance… Does this direction sound good? Should I proceed
+> with this approach?"*
+
+It read the instruction file, formed a plan, cited it, then asked permission instead of
+acting. **That may be a real treatment effect** — an instruction file that makes the agent
+more deliberative and so more likely to stall headless. Classifying it as infrastructure
+would delete a genuine effect of the thing under test, and would only ever delete runs from
+the treatment arm. That is bias in the flattering direction, which this project has been
+caught by twice.
+
+**Recommendation:** keep `899232bb` as a treatment-arm failure; classify only the three API
+failures as F13 and replace them. Then the dataset is 10 + 10 and scorable.
+
+### Next actions, in order
+
+1. Decide on `899232bb` (above).
+2. Teach `run-agent.sh` to classify a run as F13 when the agent log matches an
+   infrastructure signature — `API Error`, `Connection closed`, rate limit, quota.
+   **Do not** match on the agent asking a question; a deliberation stall must keep counting
+   against the treatment.
+3. Re-run 3 replacements (2 baseline, 1 instructions), ~10 min, ~$0.60.
+4. `python3 runner/analyze-experiment.py EXP-BE002-CLAUDEMD` — the `KEEP` bar is Amendment
+   2's 24%, derived from a clean B0 arm and unaffected by any void.
+5. PR the branch `exp/be002-claudemd` (currently one unpushed-to-main commit) with the result.
+
+### Infrastructure gotchas hit today
+
+- **Colima's port forwarding wedged**: every container healthy inside the VM, every host
+  port dead. `colima restart`, then start containers by hand — **none have a restart
+  policy**, including `grafana-*` and `ai-portfolio-rabbitmq-1`, which are not this
+  project's.
+- **`make build-api` before `docker compose up --build`**, and rebuild after any migration.
+  The running image was 11 hours stale and Spring silently ignores unknown JSON fields, so
+  `taskAttempted` was being accepted and dropped while the guard looked like it worked.
+
+---
+
 ## Status: instrument works, no experiment has ever produced a valid result
 
 Chapter 00 M0–M10 is built, tested and merged. `make up && make demo` works. The instrument
@@ -221,7 +306,20 @@ seventh harness bug would hide.
 
 ## The thing most worth remembering
 
-Six bugs have now made the harness measure something other than the agent:
+**Twelve** bugs have now made the harness measure something other than the agent. Six were
+found on 2026-08-09, and the two that mattered most were not found by reading code at all:
+#11 came from an outside reviewer plus a two-minute controlled test, and #12 from reading
+what four runs actually changed. The list below covers 1–6; 7–12 are in the audit and in
+the void notices.
+
+The pattern across all twelve: **an environmental block keeps being recorded as a
+capability failure.** Quota → F03. Permission block → F05. Dropped connection → F03. Each
+time it was fixed for the specific cause rather than the class, and each time it came back
+wearing a different hat. That is why the guard added on 2026-08-09 keys on *"produced no
+implementation"* rather than on any particular reason for it — and why it caught #12 on the
+first batch it ran against.
+
+The six original bugs:
 
 1. `AGENTS.md`, installed by the runner, counted as an agent scope violation.
 2. An exhausted Copilot quota recorded as **F03, incorrect code**.
