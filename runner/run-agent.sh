@@ -464,10 +464,21 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     # is untouched and keeps counting against its arm — which is what must happen when the
     # thing under test is what made the agent hesitate.
     TOOL_CALLS_SEEN="$(jq -r '.behavior.toolCalls // 0' <<<"$TELEMETRY")"
+    MODEL_CALLS_SEEN="$(jq -r '.behavior.modelCalls // 0' <<<"$TELEMETRY")"
     if [[ "$PRODUCED_NOTHING" == true && "${TOOL_CALLS_SEEN:-0}" -eq 0 && "$AGENT_ABORTED" != true ]]; then
       AGENT_ABORTED=true
       ABORT_CLASS="F13"
       ABORT_REASON="the agent changed no file and called no tool — it never acted"
+    # Amendment 1(3), the other half. A run that *did* change files but reports zero model
+    # calls and zero tool calls did not run for free — the collector missed it. Cost and tool
+    # calls are registered outcomes, so this run has no measurement of the things being
+    # compared, whatever its diff looks like. Entering it as a zero would read as the
+    # cheapest run in its arm, and an outage landing in one arm would look like an efficiency
+    # win. Caught here rather than only in the analyser so it is replaced, not merely refused.
+    elif [[ "${TOOL_CALLS_SEEN:-0}" -eq 0 && "${MODEL_CALLS_SEEN:-0}" -eq 0 && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="telemetry reports 0 model calls and 0 tool calls for a run that changed files — the collector missed it"
     fi
 
     SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"

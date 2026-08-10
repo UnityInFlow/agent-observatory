@@ -52,6 +52,34 @@ a shorter file" would not recover it.
 
 Three of four predictions held, against one of four for the void V3.
 
+### The hook caveat is discharged — `EXP-BE002-NOHOOKS`, same day
+
+Ran both arms again with `--isolate-user-settings` (`--setting-sources project`), which drops
+`~/.claude/settings.json` and the 21 hooks in it while leaving `CLAUDE.md` readable.
+Manipulation check: **0 hook executions in all 20 runs**, against a V2 baseline median of 24.5.
+
+| | with hooks (V2) | without hooks | level change |
+|---|---:|---:|---:|
+| baseline cost | $0.1301 | $0.1139 | −12.5% |
+| instructions cost | $0.1809 | $0.1572 | −13.1% |
+| **premium** | **+39.0%** | **+38.1%** | **−0.9 pp** |
+
+**The premium is not a hook artefact.** Both arms got ~13% cheaper by the same proportion and
+the gap barely moved. Four of four predictions held. The behavioural split is now **50 of 50**
+with zero crossover.
+
+Incidentally measured and worth keeping: **hooks cost ~13% of a run** on this machine, at ~1.6
+executions per tool call.
+
+Two corrections happened along the way, both worth remembering:
+- Hook counts were first published as 16.0/18.5 from `grep -c` over the event log. The
+  collector batches many records per line, so that counted **batches** and undercounted by
+  about a third. Correct figures 24.5/31.5. **Never `grep -c` this log for per-run counts.**
+- The caveat was first drafted as "+39% is an upper bound". Checking the per-arm rates showed
+  that was a guess with a direction attached, so it was not published that way. The
+  measurement then came out at +38.1% — roughly what "upper bound" implied, for reasons that
+  claim did not have.
+
 ### Next actions
 
 1. PR the branch `exp/be002-claudemd` (4 commits, pushed). It carries the void notice, the

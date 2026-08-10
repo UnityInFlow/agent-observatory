@@ -749,3 +749,88 @@ that requires no retraction.
 It does not make `EXP-BE002-CLAUDEMD-V2` void. Hooks were equal per tool call across its arms,
 so its comparison was sound; this experiment tests whether its *number* travels off this
 machine, which is a different question from whether its finding was correct.
+
+---
+
+# Result — `EXP-BE002-NOHOOKS`, 2026-08-10
+
+**The +39% premium is not a hook artefact.** It survives with hooks removed, essentially
+unchanged.
+
+```
+VERDICT: INCONCLUSIVE — cost change +38% (p=0.00) does not clear the registered bar
+```
+
+10 + 10 measuring runs, arms interleaved, `--isolate-user-settings` throughout. One
+instructions run discarded F15 and replaced (see below). Manipulation check: **0 hook
+executions across all 20 runs**, against a V2 baseline median of 24.5.
+
+## The comparison this experiment was registered to make
+
+Not the levels — the gap.
+
+| | with hooks (V2) | without hooks | level change |
+|---|---:|---:|---:|
+| baseline median cost | $0.1301 | $0.1139 | −12.5% |
+| instructions median cost | $0.1809 | $0.1572 | −13.1% |
+| **treatment premium** | **+39.0%** (p<.01) | **+38.1%** (p<.01) | **−0.9 pp** |
+
+Both arms got about 13% cheaper, by almost exactly the same proportion, and the premium moved
+by less than a percentage point. That is what "hooks are not a differential contaminant" looks
+like when it is measured instead of argued: the overhead was real, worth ~13% of every run,
+and it sat on both arms equally.
+
+Full table without hooks:
+
+| metric | baseline | instructions | change | p | vs MDE |
+|---|---:|---:|---:|---:|---|
+| **cost** (primary) | $0.1139 | $0.1572 | **+38.1%** | <0.01 | beyond 24% |
+| cache tokens | 496 k | 700 k | +41.2% | 0.01 | beyond 32% |
+| model calls | 17.5 | 22.5 | +28.6% | 0.02 | — |
+| tool calls | 15 | 20 | +33.3% | <0.01 | below 36% |
+| duration | 75.5 s | 108 s | +43.0% | 0.01 | below 175% |
+| pass rate | 100% | 100% | — | — | — |
+| F02 / F07 | 0 / 0 | 0 / 0 | — | — | — |
+
+## Four of four predictions held
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | The premium survives near +39%, still beyond the 24% MDE | **Held.** +38.1%, p < .01. |
+| 2 | Both arms get cheaper in absolute terms | **Held.** −12.5% and −13.1%. |
+| 3 | The behavioural split is unchanged | **Held.** baseline 10/10 one file, instructions 10/10 three files. |
+| 4 | Hook executions fall to zero (manipulation check) | **Held.** 0 in all 20 runs. |
+
+The behavioural split is now **50 of 50** across every uncontaminated run of this instruction
+file, with zero crossover: `OrderController.kt` alone under baseline, `Order.kt` +
+`OrderController.kt` + `GlobalExceptionHandler.kt` under the treatment.
+
+## What this settles, and what it does not
+
+**Settled:** the V2 headline is a property of the instruction file, not of this machine's hook
+configuration. Its conclusion needs no restatement. The caveat that prompted this experiment
+is discharged — and note it was discharged by measurement, having been explicitly *refused* a
+direction beforehand, because "upper bound" would have been a guess that happened to be
+roughly right for the wrong reason.
+
+**Also settled, incidentally:** hooks cost about 13% of a run on this machine, at ~1.6
+executions per tool call. That number is worth having and nobody had measured it.
+
+**Not settled:** everything V2 already listed. n=10, one task, one file, haiku. BE-002 remains
+close to the worst case for a conventions file.
+
+## The discarded run, and the gap it exposed
+
+`cdaef206` passed 7/7 and changed the correct three production files in 93 s, while its
+telemetry reported **0 model calls and 0 tool calls**. The collector missed it; the agent did
+not run for free.
+
+Amendment 1(3) already covers this — missing telemetry is not a measurement of zero, such runs
+are excluded and replaced — and the analyser refused the batch on exactly that ground, so the
+fail-closed design worked. But the **runner** did not classify it, because its rule required
+the agent to have produced nothing, and this run produced a full correct diff. Entered as-is
+it would have been the cheapest run in its arm.
+
+The runner now records F15 when telemetry reports zero model calls **and** zero tool calls,
+whatever the diff shows. Cost and tool calls are the registered outcomes; a run with no
+measurement of them has nothing to contribute regardless of how good its code is.
