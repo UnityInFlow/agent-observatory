@@ -4,18 +4,27 @@
 #
 #   claude-telemetry.sh <run-id> [events-file]
 #
-# Claude Code does not emit traces. It reports agent activity as OpenTelemetry **log
-# events** (§25), so there is no span tree to query back out of Tempo the way the Copilot
-# adapter does. Rather than fabricating a span hierarchy that never existed — explicitly
-# warned against in §26 — this reads the events the collector persisted and normalizes
-# them into the same internal BehaviorMetrics / EfficiencyMetrics as every other runtime.
+# Claude Code reports agent activity as OpenTelemetry **log events** (§25), and this reads
+# the events the collector persisted and normalizes them into the same internal
+# BehaviorMetrics / EfficiencyMetrics as every other runtime.
 #
-# The architecture is required to tolerate exactly this asymmetry:
+# This header used to open "Claude Code does not emit traces", and every run inherited that
+# sentence as a hardcoded `traceId: null`. It was false. Claude Code emits spans whenever
+# CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 is set, which telemetry-env.sh now does; the flag
+# was simply never on. The claim was never tested against a Tempo query before being
+# written down, and it then explained away its own symptom for every run that followed.
+#
+# The measurements below still come from events rather than spans. Events remain the
+# richer source here — cost_usd, cache split and tool_decision have no span equivalent —
+# so the trace is used for correlation, not for metrics. No span hierarchy is fabricated,
+# which §26 warns against; the traceId is read from the records themselves.
+#
+# The architecture still tolerates asymmetry between runtimes:
 #   Copilot → rich traces + metrics
-#   Claude  → metrics + events
+#   Claude  → metrics + events + (with the beta flag) correlating spans
 #   Codex   → structured agent-aware events
 #
-# Emits on stdout: { "traceId": null, "behavior": {...}, "efficiency": {...} }
+# Emits on stdout: { "traceId": string|null, "behavior": {...}, "efficiency": {...} }
 set -uo pipefail
 
 RUN_ID="${1:?usage: claude-telemetry.sh <run-id> [events-file]}"
@@ -61,8 +70,12 @@ jq -s -c --arg runId "$RUN_ID" '
   | ($decisions | map(select(str("decision") != "accept")))        as $denials
 
   | {
-      # Claude has no trace to link to; the UI falls back to the run-id query key.
-      traceId: null,
+      # Only some records carry a trace context — the pre-session ones (plugin_loaded,
+      # hook_registered) are emitted before a span is open and serialize traceId as "".
+      # Empty is not a trace id, so it is filtered rather than stored as a truthy string
+      # that would deep-link the UI to nothing. Null when the beta flag was off, which is
+      # every run recorded before 2026-08-10; the UI still falls back to the run-id key.
+      traceId: ($records | map(.traceId? // empty) | map(select(. != "")) | (.[0] // null)),
       behavior: {
         modelCalls:   ($api | length),
         toolCalls:    ($tools | length),
