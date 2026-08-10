@@ -679,3 +679,66 @@ attached, which is the habit this registration exists to break.
 The check that should exist and does not: a run of both arms with hooks disabled, comparing
 the gap rather than the levels. That is one batch and it is the obvious first item for
 whoever picks #49 up.
+
+---
+
+# Registration — `EXP-BE002-NOHOOKS`, 2026-08-10, before any run of it exists
+
+The check the caveat above says should exist. `EXP-BE002-CLAUDEMD-V2` measured a **+39%** cost
+premium for the instruction file on a machine where ~1 hook execution accompanied every tool
+call. Hooks were shown not to be a *differential* contaminant — the per-tool-call rate was the
+same in both arms — but whether they inflate, deflate or leave alone the **gap** was untested,
+and the honest position was that nobody knew the direction.
+
+## Design
+
+Identical to `EXP-BE002-CLAUDEMD-V2` in every respect — same benchmark BE-002, same runtime,
+same `haiku`, same baseline commit, same instruction file at `sha256:13a7b6af…`, 10 + 10 runs
+with the arms **interleaved** — plus `--isolate-user-settings`, which passes
+`--setting-sources project` and so loads neither `~/.claude/settings.json` nor the 21 hooks
+registered in it.
+
+Verified before registering: with that flag the worktree's `CLAUDE.md` is still read and acted
+on, so the treatment remains detectable. `--bare` would also drop hooks but disables CLAUDE.md
+discovery, which would switch off the thing under test.
+
+## What is being compared
+
+Not the levels. **The gap.** V2's treatment-versus-baseline cost premium was +39.0%
+($0.1301 → $0.1809). This experiment produces its own premium under the same design without
+hooks, and the two premiums are compared.
+
+Absolute costs are expected to fall in *both* arms once ~1 hook execution per tool call is
+removed. A drop in the levels is therefore not the finding and must not be reported as one.
+
+## Predictions, before the data exists
+
+1. **The premium survives at a materially similar size** — somewhere near +39%, and still
+   beyond the registered 24% cost MDE. The reasoning is that the premium is driven by the
+   agent doing more work (output tokens +50%, added lines +54% in V2), and hook executions are
+   shell-level work that does not scale with how much the model writes.
+2. **Both arms get cheaper in absolute terms.**
+3. **The behavioural split is unchanged**: baseline 10/10 touching `OrderController.kt` only,
+   instructions 10/10 touching `Order.kt` + `OrderController.kt` + `GlobalExceptionHandler.kt`.
+   This has been 30/30 across every uncontaminated run so far and nothing here should disturb
+   it.
+4. **Hook executions fall to zero**, which is the manipulation check. If they do not, the flag
+   did not do what this registration claims and the run is void rather than informative.
+
+## How it will be read
+
+- **The premium is not a hook artefact** if the no-hooks gap is still beyond the 24% MDE with
+  p < .05. V2's conclusion stands as written.
+- **Hooks were a substantial part of it** if the gap falls below the MDE, or loses
+  significance. V2's headline would then need restating as a property of that machine.
+- **Anything between** is inconclusive on this question at n=10 and must be reported that way.
+
+Stated before the data because the temptation here is obvious: the tidy outcome is
+"the premium survives", it would confirm what was already published, and it is the reading
+that requires no retraction.
+
+## What this does not do
+
+It does not make `EXP-BE002-CLAUDEMD-V2` void. Hooks were equal per tool call across its arms,
+so its comparison was sound; this experiment tests whether its *number* travels off this
+machine, which is a different question from whether its finding was correct.

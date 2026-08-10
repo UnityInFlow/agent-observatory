@@ -37,6 +37,11 @@ AGENT_MODEL="${AGENT_MODEL:-}"
 # mode that §11 asks for on the very first run.
 INTERACTIVE=false
 
+# Drop the operator's user-scope settings, and with them the hooks registered there. Left
+# off by default so this does not silently change what "baseline" means between experiments;
+# an experiment that wants it must ask, and the request is recorded in the run's invocation.
+ISOLATE_USER_SETTINGS=false
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --web)        WEB="$2"; shift 2 ;;
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
     --model)      AGENT_MODEL="$2"; shift 2 ;;
+    --isolate-user-settings) ISOLATE_USER_SETTINGS=true; shift ;;
     --interactive) INTERACTIVE=true; shift ;;
     --keep)       KEEP_WORKTREE=true; shift ;;
     -h|--help)    usage ;;
@@ -330,6 +336,11 @@ case "$RUNTIME" in
       --disable-slash-commands
       --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
     )
+    # --setting-sources project: load project settings only, so ~/.claude/settings.json and
+    # the 21 hooks registered in it never reach the agent. Verified not to disturb CLAUDE.md
+    # discovery, which matters because that file *is* the treatment — unlike --bare, which
+    # would switch the treatment off along with the hooks.
+    [[ "$ISOLATE_USER_SETTINGS" == true ]] && CLAUDE_ARGS+=(--setting-sources project)
     [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
     if [[ "$INTERACTIVE" == true ]]; then
       ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" ) \
