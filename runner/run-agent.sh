@@ -313,9 +313,21 @@ case "$RUNTIME" in
     # has configured at user scope, so the "plain baseline" varies by machine and its tool
     # schemas inflate the context of every request — which lands on cost, the primary
     # metric. A benchmark run gets no MCP servers unless a customization supplies them.
+    # --disable-slash-commands: the same argument as --strict-mcp-config, for the hole next
+    # to it. Without it the agent loads the operator's user-scope plugins and their skills,
+    # so a "plain baseline" carries whatever workflow tooling happens to be installed on the
+    # machine. That is not hypothetical (harness bug #13): in EXP-BE002-CLAUDEMD a plugin
+    # skill fired in 5 of 23 runs, and one of them wrote a planning document to
+    # docs/superpowers/plans/ and changed no production file at all. The three contaminated
+    # passing runs held the three highest tool counts in their arm, so the leak lands on
+    # cost and tool calls — two of the registered outcomes.
+    #
+    # This does not isolate ~/.claude/settings.json; permission rules still leak. That is a
+    # separate, narrower hole and it is tracked, not fixed here.
     CLAUDE_ARGS=(
       --permission-mode acceptEdits
       --strict-mcp-config
+      --disable-slash-commands
       --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
     )
     [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
@@ -366,12 +378,35 @@ echo "---------------------------------------------------------------"
 # code). That is a lie about the agent and it poisons any comparison the run appears in:
 # an exhausted quota would show up as the variant being less correct. The runner knows
 # better, because it can see the agent never did anything.
+#
+# The signature list below is deliberately about the *environment*, never about the agent.
+# A dropped connection, an exhausted quota and an expired token are all things that happen
+# to the run; none of them is evidence about the variant. An agent that stops to ask a
+# question is the opposite — that is behaviour, it may be caused by the thing under test,
+# and it must keep counting against the arm it happened in. Do not add a "the agent asked
+# something" pattern here: it would only ever delete runs from whichever arm makes the
+# agent more deliberative, which is bias in the flattering direction.
+#
+# The match is gated on the agent having produced nothing. A run that finished the task and
+# merely mentioned "API error" somewhere in its narration is not an aborted run, and keying
+# on the log alone would misclassify it.
+INFRA_SIGNATURE="no quota|quota exceeded|rate limit|too many requests|not authenticated"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|401 unauthorized|api error|connection closed|connection reset"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|502 bad gateway|503 service unavailable|overloaded_error|network error"
+
 AGENT_ABORTED=false
 ABORT_REASON=""
-if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" ]]; then
-  if grep -qiE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG"; then
+# F13 is "timeout/rate limit", F15 is "evaluator/infrastructure". Both are excluded from
+# comparisons; which one is recorded is a statement about what went wrong, and the taxonomy
+# is worth nothing if it is not accurate.
+ABORT_CLASS="F13"
+PRODUCED_NOTHING=false
+[[ "$(jq -r 'length' <<<"$CHANGED_FILES")" == "0" ]] && PRODUCED_NOTHING=true
+
+if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" && "$PRODUCED_NOTHING" == true ]]; then
+  if grep -qiE "$INFRA_SIGNATURE" "$AGENT_LOG"; then
     AGENT_ABORTED=true
-    ABORT_REASON="$(grep -ioE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG" | head -1)"
+    ABORT_REASON="$(grep -ioE "$INFRA_SIGNATURE" "$AGENT_LOG" | head -1)"
   fi
 fi
 
@@ -396,6 +431,22 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     jq -r '"    model calls \(.behavior.modelCalls)   tool calls \(.behavior.toolCalls)   " +
            "tokens ↑\(.efficiency.inputTokens) ↓\(.efficiency.outputTokens)"' <<<"$TELEMETRY"
     jq -r '.toolBreakdown[] | "    \(.calls)× \(.tool)"' <<<"$TELEMETRY"
+
+    # The leak this asserts against was found by reading what runs actually did, after a
+    # flag was already believed to close it. A fix is confirmed by the symptom failing to
+    # reappear, not by the story that motivated it — so the symptom is checked on every run
+    # from now on. If a skill executes despite --disable-slash-commands, the run measured
+    # the operator's plugins as well as the variant, and it is not evidence about either.
+    SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"
+    if [[ "${SKILL_CALLS:-0}" -gt 0 ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="a plugin skill executed ${SKILL_CALLS}× despite --disable-slash-commands (harness bug #13)"
+      echo
+      echo "  !! CONTAMINATED: ${ABORT_REASON}"
+      echo "     The agent had tooling this experiment did not give it. Recorded as"
+      echo "     infrastructure so it is excluded and replaced, not averaged in."
+    fi
   else
     echo "    no telemetry found — behaviour metrics stay empty rather than guessed"
   fi
@@ -465,10 +516,10 @@ if [[ -s "$EVALUATION_JSON" ]]; then
   # §23: F13 is "timeout/rate limit", not F03 "incorrect code". Recording the true cause
   # is the whole point of having a taxonomy instead of a FAIL counter.
   if [[ "$AGENT_ABORTED" == true ]]; then
-    EVAL_PAYLOAD="$(jq -c '.failureClass = "F13" | .passed = false' <<<"$EVAL_PAYLOAD")"
+    EVAL_PAYLOAD="$(jq -c --arg c "$ABORT_CLASS" '.failureClass = $c | .passed = false' <<<"$EVAL_PAYLOAD")"
     echo
-    echo "  !! the agent never ran: ${ABORT_REASON}"
-    echo "     recorded as F13 (rate limit / quota), not F03 (incorrect code)."
+    echo "  !! this run is not evidence about the variant: ${ABORT_REASON}"
+    echo "     recorded as ${ABORT_CLASS} (infrastructure), not F03 (incorrect code)."
     echo "     EXCLUDE this run from comparisons — it measures your quota, not the variant."
   fi
 

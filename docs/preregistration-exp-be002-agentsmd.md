@@ -424,3 +424,110 @@ about $14 and three hours of runs, against this experiment's $4. That is a Chapt
 
 **The one thing not to do is re-run this with `AGENTS.md` edited to score better.** §32,
 and the reason predictions were written down first.
+
+---
+
+# Void (3) — `EXP-BE002-CLAUDEMD`, 2026-08-10 — **the runs were not isolated**
+
+`EXP-BE002-CLAUDEMD` collected 23 runs and was never scored. It is void, and no verdict from
+it exists or should be quoted. The predictions and the decision rule are untouched for the
+fourth time; nothing below changes the 24% cost bar, the p < .05 requirement or the F02 rule.
+
+## The agent had tooling the experiment never gave it
+
+`run-agent.sh` launched the agent with `--strict-mcp-config`, whose own comment explains why:
+*"without it the agent inherits whatever MCP servers the operator has configured at user
+scope, so the 'plain baseline' varies by machine."* Exactly that argument applies to
+user-scope **plugins and their skills**, and nothing closed that hole. The agent loaded the
+operator's installed plugins on every run.
+
+It fired in **5 of the 23 runs** — telemetry records `skill.source=plugin`:
+
+| run | arm | what it did | cost | tool calls |
+|---|---|---|---:|---:|
+| `899232bb` | instructions | explored, planned, asked "Should I proceed?", never implemented | 0.164 | 13 |
+| `212c183f` | instructions | passed | 0.236 | 23 |
+| `a5cca301` | instructions | passed | 0.242 | 21 |
+| `ea50f777` | instructions | passed | 0.207 | 22 |
+| `bee6122e` | baseline | wrote `docs/superpowers/plans/…md` and **changed no production file** | 0.123 | 9 |
+
+The three contaminated *passing* treatment runs hold the **three highest tool counts in
+their arm**. Tool calls and cost are both registered outcomes, so the leak lands directly on
+what this experiment measures. Four of the five are in the treatment arm; with 5 events in
+23 runs that imbalance is well within chance, but "probably chance" is not a controlled
+variable, and it cannot be shown to be chance from these data.
+
+## The record actively certified the opposite
+
+`customization.skillsHash` was `null` on all 23 runs. It is computed by hashing
+`.github/skills.md` **inside the agent's worktree**, a path that never exists there, so it
+was structurally incapable of returning anything else. A null hash is not a missing claim,
+it is the claim *"this run had no skills"* — and it was false on every run while the agent
+was loading the operator's.
+
+This is the same failure the runner already has a comment about, one field over: *"A hash of
+the wrong file is worse than no hash: it is a provenance claim about something that had no
+effect."* Here it is the inverse — a provenance claim that something had **no** effect, when
+it did. Harness bug **#13**, and the third validity bug rather than a polish bug.
+
+## What it cost, including an analysis that was nearly published
+
+The four runs that produced no implementation had all been stored as **F03, incorrect
+code**, which was false for every one of them: none wrote any code. Three end in
+`API Error: Connection closed mid-response` and are genuine infrastructure (F13). The
+fourth, `899232bb`, has no API error and no permission denial — 13 tool calls, 0 denials —
+and was about to be recorded as **F12, a treatment-linked deliberation stall**, on the
+reasoning that an instruction file which makes the agent more deliberative makes it more
+likely to stall headless. That reasoning was written down before its telemetry was read.
+
+`899232bb` fired **4 skill activations** — the same count as `bee6122e`, the run that
+responded to a bugfix task by writing a planning document. A leaked planning skill explains
+the stall at least as well as the treatment does, and these data cannot separate them. The
+F12 adjudication is withdrawn.
+
+That is the fifth time this project has been caught by the same shape: a plausible story
+attached to a symptom, which then stops being questioned. The story was even the *cautious*
+one — it kept a failure in the treatment arm rather than discarding it, which felt like the
+conservative choice and made it easier to accept. Being biased against yourself is still
+being biased; the check is whether the explanation survives evidence collected to test it,
+not whether it flatters or damns.
+
+## Two fixes, and an assertion so the second cannot come back quietly
+
+**`--disable-slash-commands`** is now passed alongside `--strict-mcp-config`. Verified: the
+worktree's `CLAUDE.md` is still read and acted on, so the treatment remains detectable, and
+`runner/canary.sh` — which now launches with **identical flags**, having previously certified
+a configuration the runner did not use — passes under it.
+
+**Every run now asserts on the symptom.** If the telemetry shows the `Skill` tool executed
+at all, the run is recorded **F15** and excluded, with the reason printed. Amendment 2's
+lesson was that a fix is confirmed by the symptom failing to reappear and not by the story
+that motivated it; this is that check, running on every run instead of once.
+
+The narrower hole is left open and named: `~/.claude/settings.json` still reaches the agent,
+so operator permission rules are inherited. It is tracked separately and is not fixed here.
+
+## The infrastructure detector added in the same pass
+
+`run-agent.sh` now also recognises `API Error`, `Connection closed`, `Connection reset`,
+`502`, `503` and `overloaded` alongside quota and auth, so a dropped connection is recorded
+F13 at the time rather than being discovered later as a false F03.
+
+The match is gated on the agent having produced **no file**, and that gate is not caution for
+its own sake: **7 of the 16 runs that shipped working code also contain an infrastructure
+string somewhere in their logs.** `cec67b73` passed after recovering from
+`API Error: Connection closed`, which is what its 1256 s duration is. Keying on the log alone
+would have discarded seven good runs.
+
+The signature list describes the environment only. **A pattern for "the agent asked a
+question" must never be added.** It would delete runs only from whichever arm makes the agent
+more deliberative — and `899232bb` is precisely the run such a rule would have silently
+removed from the treatment arm.
+
+## Replacement
+
+`EXP-BE002-CLAUDEMD-V2`, identical in every respect, run under the isolation above. The
+instruction file is unchanged and still hashes to `sha256:13a7b6af…`; §32 forbids editing it
+in response to results, and nothing here is a result.
+
+The 23 void runs stay in the database. They are the evidence for bug #13.

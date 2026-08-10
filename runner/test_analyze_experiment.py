@@ -11,6 +11,7 @@ change the registered analysis silently.
 import contextlib
 import importlib.util
 import io
+import itertools
 import pathlib
 import unittest
 
@@ -21,10 +22,15 @@ ae = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ae)
 
 
+_run_ids = itertools.count()
+
+
 def run(variant, *, passed=True, failure=None, tool_calls=10, model_calls=12,
         cost=0.2, duration_ms=100_000, cached=400_000, created=20_000,
-        benchmark="BE-002", provider="anthropic", model="haiku", sha="abc", evaluated=True):
+        benchmark="BE-002", provider="anthropic", model="haiku", sha="abc", evaluated=True,
+        run_id=None):
     return {
+        "runId": run_id or f"run-{next(_run_ids):04d}",
         "variant": variant,
         "benchmarkId": benchmark,
         "runtime": {"provider": provider, "model": model},
@@ -264,9 +270,9 @@ class VariedDimension(unittest.TestCase):
 class UnattemptedRuns(unittest.TestCase):
     """A run that changed no production file is not evidence about the code."""
 
-    def validate(self, runs, n=2):
+    def validate(self, runs, n=2, reviewed=()):
         arms, discarded, unevaluated, unexpected = ae.partition(runs, "baseline", "instructions")
-        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n)
+        return ae.validate(runs, arms, discarded, unevaluated, unexpected, n, (), reviewed)
 
     def test_unattempted_runs_block_the_analysis(self):
         runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
@@ -292,6 +298,44 @@ class UnattemptedRuns(unittest.TestCase):
         arms, discarded, _, _ = ae.partition(runs, "baseline", "instructions")
         self.assertEqual(len(arms["instructions"]), 2)
         self.assertEqual(discarded["instructions"], 0)
+
+    def test_reviewing_an_unattempted_run_by_id_releases_the_analysis(self):
+        """A deliberation stall is a real outcome of the treatment, so it must be analysable."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        problems = self.validate(runs, reviewed=(runs[2]["runId"],))
+        self.assertEqual(problems, [])
+
+    def test_a_reviewed_run_still_counts_against_its_arm(self):
+        """Adjudicating it is not the same as excluding it — the registration drops only F13/F15."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        runs[2]["evaluation"]["passed"] = False
+        arms, discarded, _, _ = ae.partition(runs, "baseline", "instructions")
+        self.assertEqual(len(arms["instructions"]), 2)
+        self.assertEqual(discarded["instructions"], 0)
+
+    def test_reviewing_one_run_does_not_release_another(self):
+        """The hatch is per-run, so it cannot be used to wave a whole arm through."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(3)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        runs[3]["evaluation"]["taskAttempted"] = False
+        problems = self.validate(runs, n=3, reviewed=(runs[2]["runId"],))
+        self.assertTrue(any("changed no production file" in p for p in problems))
+
+    def test_a_stale_reviewed_id_is_an_error(self):
+        """Otherwise a leftover flag looks like an adjudication that never happened."""
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        runs[2]["evaluation"]["taskAttempted"] = False
+        problems = self.validate(runs, reviewed=(runs[2]["runId"], "deadbeef"))
+        self.assertTrue(any("matches no run" in p for p in problems))
+
+    def test_reviewing_a_run_that_did_attempt_is_an_error(self):
+        runs = [run("baseline") for _ in range(2)] + [run("instructions") for _ in range(2)]
+        for r in runs:
+            r["evaluation"]["taskAttempted"] = True
+        problems = self.validate(runs, reviewed=(runs[0]["runId"],))
+        self.assertTrue(any("nothing to adjudicate" in p for p in problems))
 
 
 class NoVerdictMode(unittest.TestCase):

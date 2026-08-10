@@ -155,7 +155,13 @@ def partition(runs, control, treatment):
     return arms, discarded, unevaluated, unexpected
 
 
-def validate(runs, arms, discarded, unevaluated, unexpected, expected_n, vary=()):
+def is_reviewed(run, reviewed):
+    """True when this run was explicitly adjudicated by id on the command line."""
+    run_id = run.get("runId") or ""
+    return bool(run_id) and any(run_id.startswith(prefix) for prefix in reviewed)
+
+
+def validate(runs, arms, discarded, unevaluated, unexpected, expected_n, vary=(), reviewed=()):
     """Refuse to produce numbers for anything but the registered dataset.
 
     `vary` names dimensions the experiment deliberately changes between arms. A varied
@@ -196,12 +202,39 @@ def validate(runs, arms, discarded, unevaluated, unexpected, expected_n, vary=()
             n = sum(1 for r, _ in rows if metrics(r)[key] is not None)
             if rows and n != len(rows):
                 problems.append(f"arm '{arm}' has {len(rows) - n} run(s) missing {key} telemetry")
+    # A run that produced no implementation is, by default, not evidence about the code, and
+    # it blocks the analysis. Almost always the cause is the harness, and the fix is to
+    # classify it F13 and replace it — that path is automatic and needs nothing here.
+    #
+    # But "produced nothing" is not *always* the harness. An agent can explore, plan, and
+    # then stop to ask a question, and when the thing under test is what makes it
+    # deliberate, that run is a real outcome of the treatment. The registration permits
+    # dropping only F13/F15, so such a run must stay and must count against its arm.
+    #
+    # Releasing it requires naming the run id on the command line. That is deliberately
+    # awkward: a blanket flag would let any inconvenient run be waved through, whereas an
+    # id has to be typed, appears in the invocation, and is echoed into the output below.
     for arm, rows in arms.items():
-        unattempted = sum(1 for _, ev in rows if ev.get("taskAttempted") is False)
+        unattempted = [r for r, ev in rows
+                       if ev.get("taskAttempted") is False and not is_reviewed(r, reviewed)]
         if unattempted:
             problems.append(
-                f"arm '{arm}' has {unattempted} run(s) that changed no production file — "
+                f"arm '{arm}' has {len(unattempted)} run(s) that changed no production file — "
                 "the task was not attempted, so those runs are not evidence about the code"
+            )
+    # A stale or mistyped id must not pass silently: it would look like an adjudication was
+    # made when nothing was reviewed.
+    all_ids = {r.get("runId") for r in runs if r.get("runId")}
+    unattempted_ids = {r.get("runId") for r in runs
+                       if r.get("runId") and (r.get("evaluation") or {}).get("taskAttempted") is False}
+    for prefix in reviewed:
+        matched = {i for i in all_ids if i.startswith(prefix)}
+        if not matched:
+            problems.append(f"--reviewed-unattempted '{prefix}' matches no run in this experiment")
+        elif not matched & unattempted_ids:
+            problems.append(
+                f"--reviewed-unattempted '{prefix}' names a run that did attempt the task — "
+                "there is nothing to adjudicate"
             )
     return problems
 
@@ -227,6 +260,15 @@ def main(argv=None):
              "Must separate the arms cleanly: one value per arm, different between them.",
     )
     ap.add_argument(
+        "--reviewed-unattempted",
+        action="append",
+        default=[],
+        metavar="RUNID",
+        help="run id of a run that produced no implementation and has been reviewed as a "
+             "genuine agent outcome rather than harness trouble. It stays in its arm and "
+             "counts against it. Repeatable. Every id given is echoed into the output.",
+    )
+    ap.add_argument(
         "--no-verdict",
         action="store_true",
         help="print the metric table and failure mix, and emit NO verdict. Required for any "
@@ -239,7 +281,8 @@ def main(argv=None):
         sys.exit(f"no runs recorded for experiment '{args.experiment}'")
 
     arms, discarded, unevaluated, unexpected = partition(runs, args.control, args.treatment)
-    problems = validate(runs, arms, discarded, unevaluated, unexpected, args.expect_n, tuple(args.vary))
+    problems = validate(runs, arms, discarded, unevaluated, unexpected, args.expect_n,
+                        tuple(args.vary), tuple(args.reviewed_unattempted))
 
     if problems and not args.exploratory:
         print(f"REFUSING to analyse '{args.experiment}': this is not the registered dataset.\n")
@@ -269,6 +312,14 @@ def main(argv=None):
         print(f"  {arm:<14} {len(arms[arm])} measuring{d}{val}")
     if args.vary:
         print(f"\n  treatment dimension: {', '.join(args.vary)} — varied on purpose, not a dataset fault")
+    # Printed with the numbers, never only at the point of invocation, so a table cannot be
+    # copied into a write-up without the adjudication travelling with it.
+    for run in runs:
+        ev = run.get("evaluation") or {}
+        if ev.get("taskAttempted") is False and is_reviewed(run, args.reviewed_unattempted):
+            print(f"\n  !! {run['runId'][:8]} ({run['variant']}) produced no implementation and was "
+                  f"reviewed as a\n     genuine agent outcome, not harness trouble. It counts as "
+                  f"a failure of its arm.")
     print()
 
     print(f"{'metric':<13}{'n':>5}{c:>13}{t:>13}{'change':>10}{'p':>7}  note")
