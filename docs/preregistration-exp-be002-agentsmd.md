@@ -424,3 +424,413 @@ about $14 and three hours of runs, against this experiment's $4. That is a Chapt
 
 **The one thing not to do is re-run this with `AGENTS.md` edited to score better.** §32,
 and the reason predictions were written down first.
+
+---
+
+# Void (3) — `EXP-BE002-CLAUDEMD`, 2026-08-10 — **the runs were not isolated**
+
+`EXP-BE002-CLAUDEMD` collected 23 runs and was never scored. It is void, and no verdict from
+it exists or should be quoted. The predictions and the decision rule are untouched for the
+fourth time; nothing below changes the 24% cost bar, the p < .05 requirement or the F02 rule.
+
+## The agent had tooling the experiment never gave it
+
+`run-agent.sh` launched the agent with `--strict-mcp-config`, whose own comment explains why:
+*"without it the agent inherits whatever MCP servers the operator has configured at user
+scope, so the 'plain baseline' varies by machine."* Exactly that argument applies to
+user-scope **plugins and their skills**, and nothing closed that hole. The agent loaded the
+operator's installed plugins on every run.
+
+It fired in **5 of the 23 runs** — telemetry records `skill.source=plugin`:
+
+| run | arm | what it did | cost | tool calls |
+|---|---|---|---:|---:|
+| `899232bb` | instructions | explored, planned, asked "Should I proceed?", never implemented | 0.164 | 13 |
+| `212c183f` | instructions | passed | 0.236 | 23 |
+| `a5cca301` | instructions | passed | 0.242 | 21 |
+| `ea50f777` | instructions | passed | 0.207 | 22 |
+| `bee6122e` | baseline | wrote `docs/superpowers/plans/…md` and **changed no production file** | 0.123 | 9 |
+
+The three contaminated *passing* treatment runs hold the **three highest tool counts in
+their arm**. Tool calls and cost are both registered outcomes, so the leak lands directly on
+what this experiment measures. Four of the five are in the treatment arm; with 5 events in
+23 runs that imbalance is well within chance, but "probably chance" is not a controlled
+variable, and it cannot be shown to be chance from these data.
+
+## The record actively certified the opposite
+
+`customization.skillsHash` was `null` on all 23 runs. It is computed by hashing
+`.github/skills.md` **inside the agent's worktree**, a path that never exists there, so it
+was structurally incapable of returning anything else. A null hash is not a missing claim,
+it is the claim *"this run had no skills"* — and it was false on every run while the agent
+was loading the operator's.
+
+This is the same failure the runner already has a comment about, one field over: *"A hash of
+the wrong file is worse than no hash: it is a provenance claim about something that had no
+effect."* Here it is the inverse — a provenance claim that something had **no** effect, when
+it did. Harness bug **#13**, and the third validity bug rather than a polish bug.
+
+## What it cost, including an analysis that was nearly published
+
+The four runs that produced no implementation had all been stored as **F03, incorrect
+code**, which was false for every one of them: none wrote any code. Three end in
+`API Error: Connection closed mid-response` and are genuine infrastructure (F13). The
+fourth, `899232bb`, has no API error and no permission denial — 13 tool calls, 0 denials —
+and was about to be recorded as **F12, a treatment-linked deliberation stall**, on the
+reasoning that an instruction file which makes the agent more deliberative makes it more
+likely to stall headless. That reasoning was written down before its telemetry was read.
+
+`899232bb` fired **4 skill activations** — the same count as `bee6122e`, the run that
+responded to a bugfix task by writing a planning document. A leaked planning skill explains
+the stall at least as well as the treatment does, and these data cannot separate them. The
+F12 adjudication is withdrawn.
+
+That is the fifth time this project has been caught by the same shape: a plausible story
+attached to a symptom, which then stops being questioned. The story was even the *cautious*
+one — it kept a failure in the treatment arm rather than discarding it, which felt like the
+conservative choice and made it easier to accept. Being biased against yourself is still
+being biased; the check is whether the explanation survives evidence collected to test it,
+not whether it flatters or damns.
+
+## Two fixes, and an assertion so the second cannot come back quietly
+
+**`--disable-slash-commands`** is now passed alongside `--strict-mcp-config`. Verified: the
+worktree's `CLAUDE.md` is still read and acted on, so the treatment remains detectable, and
+`runner/canary.sh` — which now launches with **identical flags**, having previously certified
+a configuration the runner did not use — passes under it.
+
+**Every run now asserts on the symptom.** If the telemetry shows the `Skill` tool executed
+at all, the run is recorded **F15** and excluded, with the reason printed. Amendment 2's
+lesson was that a fix is confirmed by the symptom failing to reappear and not by the story
+that motivated it; this is that check, running on every run instead of once.
+
+The narrower hole is left open and named: `~/.claude/settings.json` still reaches the agent,
+so operator permission rules are inherited. It is tracked separately and is not fixed here.
+
+## The infrastructure detector added in the same pass
+
+`run-agent.sh` now also recognises `API Error`, `Connection closed`, `Connection reset`,
+`502`, `503` and `overloaded` alongside quota and auth, so a dropped connection is recorded
+F13 at the time rather than being discovered later as a false F03.
+
+The match is gated on the agent having produced **no file**, and that gate is not caution for
+its own sake: **7 of the 16 runs that shipped working code also contain an infrastructure
+string somewhere in their logs.** `cec67b73` passed after recovering from
+`API Error: Connection closed`, which is what its 1256 s duration is. Keying on the log alone
+would have discarded seven good runs.
+
+The signature list describes the environment only. **A pattern for "the agent asked a
+question" must never be added.** It would delete runs only from whichever arm makes the agent
+more deliberative — and `899232bb` is precisely the run such a rule would have silently
+removed from the treatment arm.
+
+## Replacement
+
+`EXP-BE002-CLAUDEMD-V2`, identical in every respect, run under the isolation above. The
+instruction file is unchanged and still hashes to `sha256:13a7b6af…`; §32 forbids editing it
+in response to results, and nothing here is a result.
+
+The 23 void runs stay in the database. They are the evidence for bug #13.
+
+---
+
+# Result — `EXP-BE002-CLAUDEMD-V2`, 2026-08-10
+
+The first result this project has produced that is not void.
+
+```
+VERDICT: INCONCLUSIVE — cost change +39% (p=0.00) does not clear the registered bar
+```
+
+`INCONCLUSIVE` is the correct verdict and a slightly misleading word for what happened. The
+registered rule has three outcomes: `KEEP` needs the primary metric to **improve** beyond its
+MDE, `REJECT` needs F02 to increase, and everything else is `INCONCLUSIVE`. Cost moved beyond
+its MDE with p < .01 — in the **wrong direction** — and F02 stayed at zero in both arms, so
+neither named branch fires. The number is not ambiguous; the rule simply has no branch for
+"the treatment is significantly worse on the primary metric without harming correctness".
+That gap is noted, not patched, because patching a decision rule with its result on screen is
+the thing this registration exists to prevent.
+
+## Dataset
+
+10 + 10 measuring runs, **arms interleaved** rather than run in blocks, after the V1 batch
+showed infrastructure trouble clustering in time and landing unevenly across arms. 16 further
+runs were discarded F13 (a session limit mid-batch) and replaced, as the registration
+requires. Every run: same benchmark, runtime, model and baseline commit; `instructionsHash`
+set on all 10 treatment runs and null on all 10 baseline runs; **zero skill activations**, so
+the harness bug #13 fix held across the whole batch.
+
+| metric | baseline | instructions | change | p | vs MDE |
+|---|---:|---:|---:|---:|---|
+| **cost** (primary) | $0.1301 | $0.1809 | **+39.0%** | <0.01 | beyond 24% |
+| cache tokens | 571 k | 805 k | +41.0% | 0.01 | beyond 32% |
+| model calls | 16.5 | 21 | +27.3% | 0.01 | — |
+| tool calls | 15.5 | 19.5 | +25.8% | 0.01 | below 36% |
+| duration | 90 s | 125 s | +38.9% | <0.01 | below 175% |
+| pass rate | **100%** | **100%** | — | — | — |
+| F02 error-contract | 0 | 0 | — | — | — |
+| F07 scope | 0 | 0 | — | — | — |
+
+## The predictions did well: three of four held
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | F02 increases in B1; two or more means the stale convention is actively harming | **Wrong.** Zero in both arms. The convention did not damage the error contract. |
+| 2 | F07 scope failures decrease or stay at zero | **Held.** Zero in both arms. |
+| 3 | Cost increases slightly, because the file is extra context and cache creation carries it | **Held on direction, wrong on magnitude and on mechanism.** +39% is not "slightly", and see below. |
+| 4 | Net pass rate not obviously better | **Held.** 100% against 100% — identical, not merely indistinguishable. |
+
+Three of four, against one of four for the void V3. Predictions written before the data are
+worth writing.
+
+## What the instruction file actually did
+
+The effect is not statistical. It is deterministic, and it is the qualitative result the
+registration said this experiment was really about:
+
+- **baseline, 10 of 10 runs:** changed **`OrderController.kt` only** — the amount check
+  hand-rolled inline in the controller.
+- **instructions, 10 of 10 runs:** changed **`Order.kt` + `OrderController.kt` +
+  `GlobalExceptionHandler.kt`** — `@Positive` on the request DTO, `@Valid` on the controller
+  parameter, and a `MethodArgumentNotValidException` handler.
+
+Zero crossover in 20 runs. That is the `CLAUDE.md` "Conventions" section being followed
+literally: *"Request validation belongs at the API boundary, using `jakarta.validation`
+annotations on the request DTO plus `@Valid` on the controller parameter."* Both files already
+exist in the fixture, so the treatment arm modifies them rather than inventing them.
+
+**The instruction file works exactly as written.** It bought a more idiomatic, more
+conventional implementation, and on this task that implementation cost 39% more for an
+outcome the evaluator scores identically — 7/7 acceptance criteria, 100% pass, either way.
+
+## Prediction 3 named the right direction and the wrong cause
+
+The registration attributed the expected cost rise to the file itself: *"extra context on
+every request, and cache creation carries it."* Median tokens say that is the smallest
+component.
+
+| | baseline | instructions | change |
+|---|---:|---:|---:|
+| cache **creation** tokens — carrying the file | 25 239 | 30 530 | +21% |
+| cache **read** tokens — more turns | 546 131 | 773 835 | +42% |
+| output tokens — more writing | 5 507 | 8 258 | +50% |
+| added lines — a bigger change | 26 | 40 | +54% |
+
+Carrying `CLAUDE.md` costs about 5 300 cache-creation tokens per run. The rest of the increase
+is the agent doing genuinely more work, because the file told it to solve the problem a more
+thorough way. Cost per tool call rose about 10% while tool calls rose 26%, so roughly two
+thirds of the cost premium is extra work and one third is heavier context per step. That
+decomposition is descriptive and was not registered; it is a reading of the result, not a
+test.
+
+This distinction matters for anyone acting on the finding. "Instruction files cost more
+because they are extra context" implies the fix is a shorter file. That is mostly wrong here.
+The cost is the behaviour the file prescribes, and a shorter file that still prescribed the
+annotation approach would cost approximately the same.
+
+## What this does and does not support
+
+**Supported.** On this task, this file, this model: the instruction file reliably changes the
+implementation strategy, produces no measurable correctness benefit, and costs significantly
+more. If cost matters and the conventional structure does not, it does not pay for itself
+here.
+
+**Not supported.** That instruction files are not worth it generally. BE-002 is a small
+single-endpoint validation fix where the idiomatic solution and the quick one are both
+correct — close to the worst case for a conventions file, since conventions buy consistency
+across a codebase over time and this task has neither. The prediction that a stale convention
+would break the error contract was **wrong**, and that is the more interesting negative: the
+file was written for a different task months earlier and still cost nothing in correctness.
+
+**Untested.** Whether the treatment's structure pays off on a task where the difference
+compounds — several endpoints, or a second change layered onto the first. That is the
+experiment this result argues for, and it is a Chapter 01 question.
+
+## Two caveats that are not resolved
+
+**Operator settings still reach the agent.** `~/.claude/settings.json` is inherited by every
+run, so "baseline" here is not a pristine Claude Code — it is Claude Code with this machine's
+permission rules. Constant across both arms, so it does not bias the comparison. Tracked
+separately from #13.
+
+**Hooks are not isolated either, and this was found after the result was written up.**
+`--strict-mcp-config` and `--disable-slash-commands` do not cover hooks: 21 are registered on
+this machine and they execute on every run (issue #49).
+
+Measured over the 20 measuring runs, hook executions per run were:
+
+| | hook executions | tool calls | hooks per tool call |
+|---|---:|---:|---:|
+| baseline | 24.5 | 15.5 | 1.58 |
+| instructions | 31.5 | 19.5 | 1.62 |
+
+**The per-tool-call rate is the same in both arms**, so hooks are not a differential
+contaminant and the comparison is not biased by them — the +28.6% more hook executions in the
+treatment arm is a consequence of it making 25.8% more tool calls, not of hooks behaving
+differently under the treatment.
+
+*(These counts were first published as 16.0 and 18.5, from `grep -c` over the event log. The
+collector batches many records per line, so that counted batches and undercounted executions
+by roughly a third. Corrected by counting `claude_code.hook_execution_start` records. The
+per-tool-call conclusion is unchanged — 1.58 against 1.62 rather than 1.03 against 0.95 — but
+the published numbers were wrong and a line-counting habit is worth naming, since the same
+mistake would silently deflate any per-run event count measured this way.)*
+
+What it does mean is that the **absolute** figures describe this machine. Every run carried
+roughly 1.6 hook executions per tool call, and that overhead is inside the $0.1301 and $0.1809.
+Whether removing it would narrow the +39% gap, widen it, or leave it alone is **untested**:
+it depends on the per-execution cost of these particular hooks relative to the model work, and
+that was never measured. Stating it as an "upper bound" would be a guess with a direction
+attached, which is the habit this registration exists to break.
+
+The check that should exist and does not: a run of both arms with hooks disabled, comparing
+the gap rather than the levels. That is one batch and it is the obvious first item for
+whoever picks #49 up.
+
+---
+
+# Registration — `EXP-BE002-NOHOOKS`, 2026-08-10, before any run of it exists
+
+The check the caveat above says should exist. `EXP-BE002-CLAUDEMD-V2` measured a **+39%** cost
+premium for the instruction file on a machine where ~1 hook execution accompanied every tool
+call. Hooks were shown not to be a *differential* contaminant — the per-tool-call rate was the
+same in both arms — but whether they inflate, deflate or leave alone the **gap** was untested,
+and the honest position was that nobody knew the direction.
+
+## Design
+
+Identical to `EXP-BE002-CLAUDEMD-V2` in every respect — same benchmark BE-002, same runtime,
+same `haiku`, same baseline commit, same instruction file at `sha256:13a7b6af…`, 10 + 10 runs
+with the arms **interleaved** — plus `--isolate-user-settings`, which passes
+`--setting-sources project` and so loads neither `~/.claude/settings.json` nor the 21 hooks
+registered in it.
+
+Verified before registering: with that flag the worktree's `CLAUDE.md` is still read and acted
+on, so the treatment remains detectable. `--bare` would also drop hooks but disables CLAUDE.md
+discovery, which would switch off the thing under test.
+
+## What is being compared
+
+Not the levels. **The gap.** V2's treatment-versus-baseline cost premium was +39.0%
+($0.1301 → $0.1809). This experiment produces its own premium under the same design without
+hooks, and the two premiums are compared.
+
+Absolute costs are expected to fall in *both* arms once ~1 hook execution per tool call is
+removed. A drop in the levels is therefore not the finding and must not be reported as one.
+
+## Predictions, before the data exists
+
+1. **The premium survives at a materially similar size** — somewhere near +39%, and still
+   beyond the registered 24% cost MDE. The reasoning is that the premium is driven by the
+   agent doing more work (output tokens +50%, added lines +54% in V2), and hook executions are
+   shell-level work that does not scale with how much the model writes.
+2. **Both arms get cheaper in absolute terms.**
+3. **The behavioural split is unchanged**: baseline 10/10 touching `OrderController.kt` only,
+   instructions 10/10 touching `Order.kt` + `OrderController.kt` + `GlobalExceptionHandler.kt`.
+   This has been 30/30 across every uncontaminated run so far and nothing here should disturb
+   it.
+4. **Hook executions fall to zero**, which is the manipulation check. If they do not, the flag
+   did not do what this registration claims and the run is void rather than informative.
+
+## How it will be read
+
+- **The premium is not a hook artefact** if the no-hooks gap is still beyond the 24% MDE with
+  p < .05. V2's conclusion stands as written.
+- **Hooks were a substantial part of it** if the gap falls below the MDE, or loses
+  significance. V2's headline would then need restating as a property of that machine.
+- **Anything between** is inconclusive on this question at n=10 and must be reported that way.
+
+Stated before the data because the temptation here is obvious: the tidy outcome is
+"the premium survives", it would confirm what was already published, and it is the reading
+that requires no retraction.
+
+## What this does not do
+
+It does not make `EXP-BE002-CLAUDEMD-V2` void. Hooks were equal per tool call across its arms,
+so its comparison was sound; this experiment tests whether its *number* travels off this
+machine, which is a different question from whether its finding was correct.
+
+---
+
+# Result — `EXP-BE002-NOHOOKS`, 2026-08-10
+
+**The +39% premium is not a hook artefact.** It survives with hooks removed, essentially
+unchanged.
+
+```
+VERDICT: INCONCLUSIVE — cost change +38% (p=0.00) does not clear the registered bar
+```
+
+10 + 10 measuring runs, arms interleaved, `--isolate-user-settings` throughout. One
+instructions run discarded F15 and replaced (see below). Manipulation check: **0 hook
+executions across all 20 runs**, against a V2 baseline median of 24.5.
+
+## The comparison this experiment was registered to make
+
+Not the levels — the gap.
+
+| | with hooks (V2) | without hooks | level change |
+|---|---:|---:|---:|
+| baseline median cost | $0.1301 | $0.1139 | −12.5% |
+| instructions median cost | $0.1809 | $0.1572 | −13.1% |
+| **treatment premium** | **+39.0%** (p<.01) | **+38.1%** (p<.01) | **−0.9 pp** |
+
+Both arms got about 13% cheaper, by almost exactly the same proportion, and the premium moved
+by less than a percentage point. That is what "hooks are not a differential contaminant" looks
+like when it is measured instead of argued: the overhead was real, worth ~13% of every run,
+and it sat on both arms equally.
+
+Full table without hooks:
+
+| metric | baseline | instructions | change | p | vs MDE |
+|---|---:|---:|---:|---:|---|
+| **cost** (primary) | $0.1139 | $0.1572 | **+38.1%** | <0.01 | beyond 24% |
+| cache tokens | 496 k | 700 k | +41.2% | 0.01 | beyond 32% |
+| model calls | 17.5 | 22.5 | +28.6% | 0.02 | — |
+| tool calls | 15 | 20 | +33.3% | <0.01 | below 36% |
+| duration | 75.5 s | 108 s | +43.0% | 0.01 | below 175% |
+| pass rate | 100% | 100% | — | — | — |
+| F02 / F07 | 0 / 0 | 0 / 0 | — | — | — |
+
+## Four of four predictions held
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | The premium survives near +39%, still beyond the 24% MDE | **Held.** +38.1%, p < .01. |
+| 2 | Both arms get cheaper in absolute terms | **Held.** −12.5% and −13.1%. |
+| 3 | The behavioural split is unchanged | **Held.** baseline 10/10 one file, instructions 10/10 three files. |
+| 4 | Hook executions fall to zero (manipulation check) | **Held.** 0 in all 20 runs. |
+
+The behavioural split is now **50 of 50** across every uncontaminated run of this instruction
+file, with zero crossover: `OrderController.kt` alone under baseline, `Order.kt` +
+`OrderController.kt` + `GlobalExceptionHandler.kt` under the treatment.
+
+## What this settles, and what it does not
+
+**Settled:** the V2 headline is a property of the instruction file, not of this machine's hook
+configuration. Its conclusion needs no restatement. The caveat that prompted this experiment
+is discharged — and note it was discharged by measurement, having been explicitly *refused* a
+direction beforehand, because "upper bound" would have been a guess that happened to be
+roughly right for the wrong reason.
+
+**Also settled, incidentally:** hooks cost about 13% of a run on this machine, at ~1.6
+executions per tool call. That number is worth having and nobody had measured it.
+
+**Not settled:** everything V2 already listed. n=10, one task, one file, haiku. BE-002 remains
+close to the worst case for a conventions file.
+
+## The discarded run, and the gap it exposed
+
+`cdaef206` passed 7/7 and changed the correct three production files in 93 s, while its
+telemetry reported **0 model calls and 0 tool calls**. The collector missed it; the agent did
+not run for free.
+
+Amendment 1(3) already covers this — missing telemetry is not a measurement of zero, such runs
+are excluded and replaced — and the analyser refused the batch on exactly that ground, so the
+fail-closed design worked. But the **runner** did not classify it, because its rule required
+the agent to have produced nothing, and this run produced a full correct diff. Entered as-is
+it would have been the cheapest run in its arm.
+
+The runner now records F15 when telemetry reports zero model calls **and** zero tool calls,
+whatever the diff shows. Cost and tool calls are the registered outcomes; a run with no
+measurement of them has nothing to contribute regardless of how good its code is.

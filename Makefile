@@ -184,6 +184,7 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 	    --experiment $${EXPERIMENT:-EXP-001} \
 	    $${MODEL:+--model $$MODEL} \
 	    $${CUSTOMIZATION:+--customization $$CUSTOMIZATION} \
+	    $${ISOLATE_USER_SETTINGS:+--isolate-user-settings} \
 	    $${INTERACTIVE:+--interactive}
 
 .PHONY: baseline-runs

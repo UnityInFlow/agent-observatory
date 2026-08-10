@@ -32,6 +32,20 @@ case "$RUNTIME" in
 
   claude)
     export CLAUDE_CODE_ENABLE_TELEMETRY=1
+    # OTEL_TRACES_EXPORTER alone produces no spans: Claude Code gates its span emission
+    # behind this beta flag, and without it the exporter is configured for a signal that
+    # is never sent. That is why every run through 2026-08-10 recorded traceId null while
+    # its events arrived normally — the adapter was not failing to read a trace, there was
+    # no trace to read. Verified against 2.1.226 by probing with the flag on and off:
+    # off gives zero claude-code traces in Tempo, on gives claude_code.interaction with
+    # observatory.run.id on the span resource, so the traceUrl the runner already writes
+    # resolves. See issue #48.
+    #
+    # Privacy re-checked before enabling, because a new signal is a new exfiltration
+    # surface (Chapter 00 §5): the emitted span attributes are ids, durations, token
+    # counts and model names. No prompt or response content. The OTEL_LOG_* denials below
+    # still apply to events, and the collector scrubs again as defence in depth.
+    export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
     export OTEL_METRICS_EXPORTER=otlp
     export OTEL_LOGS_EXPORTER=otlp
     export OTEL_TRACES_EXPORTER=otlp

@@ -83,7 +83,11 @@ echo "=============================================================="
 
 case "$RUNTIME" in
   claude)
+    # These flags must stay identical to run-agent.sh's. A canary that certifies a
+    # configuration the runner does not use certifies nothing: it would have passed while
+    # the runner was loading the operator's plugins (harness bug #13).
     ( cd "$WORKDIR" && claude --permission-mode acceptEdits --strict-mcp-config \
+        --disable-slash-commands \
         --model "$AGENT_MODEL" -p "$TASK" ) >"$WORKDIR/.agent.log" 2>&1
     ;;
   copilot)

@@ -2,12 +2,134 @@
 
 Handoff note. Read this first when picking the work back up.
 
-## Status: instrument works, no experiment has ever produced a valid result
+---
+
+## RESUME HERE — 2026-08-10 (end of day)
+
+**`EXP-BE002-CLAUDEMD-V2` produced this project's first non-void result.** Full write-up in
+[`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md), "Result —
+`EXP-BE002-CLAUDEMD-V2`".
+
+```
+VERDICT: INCONCLUSIVE — cost change +39% (p=0.00) does not clear the registered bar
+```
+
+10 + 10 measuring runs, arms **interleaved**, zero skill contamination, `instructionsHash`
+set on all 10 treatment runs and null on all 10 baseline runs.
+
+| metric | baseline | instructions | change | p |
+|---|---:|---:|---:|---:|
+| **cost** (primary) | $0.1301 | $0.1809 | **+39.0%** | <0.01 |
+| cache tokens | 571 k | 805 k | +41.0% | 0.01 |
+| tool calls | 15.5 | 19.5 | +25.8% | 0.01 |
+| pass rate | 100% | 100% | — | — |
+| F02 / F07 | 0 / 0 | 0 / 0 | — | — |
+
+`INCONCLUSIVE` is correct by the letter of the rule and a misleading word for it. `KEEP`
+needs cost to **improve** beyond MDE; `REJECT` needs F02 to increase. Cost moved beyond its
+MDE with p < .01 in the **wrong** direction and F02 stayed at zero, so neither branch fires.
+The rule has no branch for "significantly worse on the primary metric, without harming
+correctness". Noted, deliberately not patched — patching a decision rule with its result on
+screen is what the registration exists to prevent. **Fix it before the next experiment.**
+
+### The finding, which is not statistical
+
+Zero crossover in 20 runs:
+
+- **baseline, 10/10** — changed **`OrderController.kt` only**, validation hand-rolled inline.
+- **instructions, 10/10** — changed **`Order.kt` + `OrderController.kt` +
+  `GlobalExceptionHandler.kt`**: `@Positive` on the DTO, `@Valid` on the parameter, a
+  `MethodArgumentNotValidException` handler.
+
+That is the `CLAUDE.md` Conventions section followed literally. **The instruction file works
+exactly as written** — it buys a more idiomatic implementation, and on this task that costs
+39% more for an outcome the evaluator scores identically.
+
+Prediction 3 called the direction and the wrong cause. Carrying the file is ~5 300
+cache-creation tokens (+21%); output tokens rose 50% and added lines 54%. Roughly two thirds
+of the premium is the *extra work the file prescribes*, one third is heavier context. So "use
+a shorter file" would not recover it.
+
+Three of four predictions held, against one of four for the void V3.
+
+### The hook caveat is discharged — `EXP-BE002-NOHOOKS`, same day
+
+Ran both arms again with `--isolate-user-settings` (`--setting-sources project`), which drops
+`~/.claude/settings.json` and the 21 hooks in it while leaving `CLAUDE.md` readable.
+Manipulation check: **0 hook executions in all 20 runs**, against a V2 baseline median of 24.5.
+
+| | with hooks (V2) | without hooks | level change |
+|---|---:|---:|---:|
+| baseline cost | $0.1301 | $0.1139 | −12.5% |
+| instructions cost | $0.1809 | $0.1572 | −13.1% |
+| **premium** | **+39.0%** | **+38.1%** | **−0.9 pp** |
+
+**The premium is not a hook artefact.** Both arms got ~13% cheaper by the same proportion and
+the gap barely moved. Four of four predictions held. The behavioural split is now **50 of 50**
+with zero crossover.
+
+Incidentally measured and worth keeping: **hooks cost ~13% of a run** on this machine, at ~1.6
+executions per tool call.
+
+Two corrections happened along the way, both worth remembering:
+- Hook counts were first published as 16.0/18.5 from `grep -c` over the event log. The
+  collector batches many records per line, so that counted **batches** and undercounted by
+  about a third. Correct figures 24.5/31.5. **Never `grep -c` this log for per-run counts.**
+- The caveat was first drafted as "+39% is an upper bound". Checking the per-arm rates showed
+  that was a guess with a direction attached, so it was not published that way. The
+  measurement then came out at +38.1% — roughly what "upper bound" implied, for reasons that
+  claim did not have.
+
+### Next actions
+
+1. PR the branch `exp/be002-claudemd` (4 commits, pushed). It carries the void notice, the
+   bug #13 fix, the class-based abort rule, and this result.
+2. **Add a `REJECT`-on-significantly-worse branch to the decision rule**, registered before
+   the next experiment exists — not retrofitted to this one.
+3. The experiment this result argues for: a task where the idiomatic structure *compounds*
+   — several endpoints, or a second change layered on the first. BE-002 is close to the worst
+   case for a conventions file, since conventions buy consistency the task never exercises.
+4. Still open: `~/.claude/settings.json` reaches the agent, so operator permission rules are
+   inherited. Constant across arms so it does not bias this result, but "baseline" is not a
+   pristine Claude Code. Narrower than #13, tracked, not fixed.
+
+### Two bugs found today, and the second one bit twice
+
+**#13 — the runs were not isolated.** `--strict-mcp-config` was passed, with a comment
+arguing that user-scope config makes "the plain baseline vary by machine". The identical hole
+for **plugins and their skills** was open. A plugin skill executed in 5 of 23 V1 runs; one
+answered a bugfix task by writing `docs/superpowers/plans/…md` and changed no production
+file. `skillsHash` was `null` on every run because it hashes `.github/skills.md` *inside the
+worktree*, a path that cannot exist there — a field structurally incapable of reporting the
+problem it appeared to rule out. This voided `EXP-BE002-CLAUDEMD` and withdrew an F12
+adjudication that was one commit from being published.
+
+**#2, fourth costume.** The infrastructure detector was extended for `API Error` and
+`Connection closed`. The very next batch died on `You've hit your session limit`, a phrase it
+did not contain, and 16 runs recorded F03 "incorrect code" for a billing state. The fix is no
+longer a phrase: **an agent that changed no file and called no tool did not attempt the task
+and cannot have failed it.** That needs no vocabulary and does not go stale. It stays narrow
+— a run that explored and then stalled has tool calls, so it still counts against its arm.
+
+### Infrastructure gotchas
+
+- **Session limit resets on a wall clock** (`resets 1pm (Europe/Prague)` observed). A 20-run
+  batch is roughly the budget; expect to split larger ones.
+- **Colima's port forwarding wedges**: containers healthy inside the VM, every host port
+  dead. `colima restart`, then start containers by hand — **none have a restart policy**,
+  including `grafana-*` and `ai-portfolio-rabbitmq-1`, which are not this project's.
+- **`make build-api` before `docker compose up --build`**. Spring silently ignores unknown
+  JSON fields, so a stale image drops new evaluation fields while the guard looks like it
+  works.
+
+---
+
+## Status: the instrument works, and has now produced one valid result
 
 Chapter 00 M0–M10 is built, tested and merged. `make up && make demo` works. The instrument
 was hardened substantially on 2026-08-09.
 
-**Four experiments attempted. All four void.**
+**Six experiments attempted. Five void; the sixth is the result above.**
 
 | experiment | why it is void |
 |---|---|
@@ -15,6 +137,7 @@ was hardened substantially on 2026-08-09.
 | `EXP-BE002-AGENTSMD-V2` | #28 removed it from the tree, left it in **git history** |
 | `EXP-BE002-AGENTSMD-V3` | **the treatment was never loaded** — see below |
 | `EXP-BE002-MODEL-TIER` | permission confound, and its registration was committed after nine runs had started |
+| `EXP-BE002-CLAUDEMD` | **runs not isolated** — a plugin skill from `~/.claude/` executed in 5 of 23 runs |
 
 ### V3 is void because Claude Code does not read `AGENTS.md`
 
@@ -221,7 +344,30 @@ seventh harness bug would hide.
 
 ## The thing most worth remembering
 
-Six bugs have now made the harness measure something other than the agent:
+**Thirteen** bugs have now made the harness measure something other than the agent. Six were
+found on 2026-08-09, and the two that mattered most were not found by reading code at all:
+#11 came from an outside reviewer plus a two-minute controlled test, and #12 from reading
+what four runs actually changed, and #13 from reading what five runs actually *loaded*. The
+list below covers 1–6; 7–13 are in the audit and in the void notices.
+
+The pattern across most of them: **an environmental block keeps being recorded as a
+capability failure.** Quota → F03. Permission block → F05. Dropped connection → F03. Each
+time it was fixed for the specific cause rather than the class, and each time it came back
+wearing a different hat. That is why the guard added on 2026-08-09 keys on *"produced no
+implementation"* rather than on any particular reason for it — and why it caught #12 on the
+first batch it ran against.
+
+**#13 is a different pattern, and a worse one: the harness certified a fact it had never
+checked.** `skillsHash: null` was read as "this run had no skills". It was actually the
+hash of a path that cannot exist in the worktree, so it could never have returned anything
+else — a field structurally incapable of reporting the problem it appeared to rule out. The
+runner had already closed the identical hole for MCP servers one line above, with a comment
+explaining exactly why user-scope config must not reach the agent.
+
+Ask of any reassuring field: *what value would it show if the thing it denies were
+happening?* If the answer is "the same value", it is not evidence.
+
+The six original bugs:
 
 1. `AGENTS.md`, installed by the runner, counted as an agent scope violation.
 2. An exhausted Copilot quota recorded as **F03, incorrect code**.

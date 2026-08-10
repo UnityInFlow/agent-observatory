@@ -37,6 +37,11 @@ AGENT_MODEL="${AGENT_MODEL:-}"
 # mode that §11 asks for on the very first run.
 INTERACTIVE=false
 
+# Drop the operator's user-scope settings, and with them the hooks registered there. Left
+# off by default so this does not silently change what "baseline" means between experiments;
+# an experiment that wants it must ask, and the request is recorded in the run's invocation.
+ISOLATE_USER_SETTINGS=false
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --web)        WEB="$2"; shift 2 ;;
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
     --model)      AGENT_MODEL="$2"; shift 2 ;;
+    --isolate-user-settings) ISOLATE_USER_SETTINGS=true; shift ;;
     --interactive) INTERACTIVE=true; shift ;;
     --keep)       KEEP_WORKTREE=true; shift ;;
     -h|--help)    usage ;;
@@ -313,11 +319,28 @@ case "$RUNTIME" in
     # has configured at user scope, so the "plain baseline" varies by machine and its tool
     # schemas inflate the context of every request — which lands on cost, the primary
     # metric. A benchmark run gets no MCP servers unless a customization supplies them.
+    # --disable-slash-commands: the same argument as --strict-mcp-config, for the hole next
+    # to it. Without it the agent loads the operator's user-scope plugins and their skills,
+    # so a "plain baseline" carries whatever workflow tooling happens to be installed on the
+    # machine. That is not hypothetical (harness bug #13): in EXP-BE002-CLAUDEMD a plugin
+    # skill fired in 5 of 23 runs, and one of them wrote a planning document to
+    # docs/superpowers/plans/ and changed no production file at all. The three contaminated
+    # passing runs held the three highest tool counts in their arm, so the leak lands on
+    # cost and tool calls — two of the registered outcomes.
+    #
+    # This does not isolate ~/.claude/settings.json; permission rules still leak. That is a
+    # separate, narrower hole and it is tracked, not fixed here.
     CLAUDE_ARGS=(
       --permission-mode acceptEdits
       --strict-mcp-config
+      --disable-slash-commands
       --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
     )
+    # --setting-sources project: load project settings only, so ~/.claude/settings.json and
+    # the 21 hooks registered in it never reach the agent. Verified not to disturb CLAUDE.md
+    # discovery, which matters because that file *is* the treatment — unlike --bare, which
+    # would switch the treatment off along with the hooks.
+    [[ "$ISOLATE_USER_SETTINGS" == true ]] && CLAUDE_ARGS+=(--setting-sources project)
     [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
     if [[ "$INTERACTIVE" == true ]]; then
       ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" ) \
@@ -366,12 +389,36 @@ echo "---------------------------------------------------------------"
 # code). That is a lie about the agent and it poisons any comparison the run appears in:
 # an exhausted quota would show up as the variant being less correct. The runner knows
 # better, because it can see the agent never did anything.
+#
+# The signature list below is deliberately about the *environment*, never about the agent.
+# A dropped connection, an exhausted quota and an expired token are all things that happen
+# to the run; none of them is evidence about the variant. An agent that stops to ask a
+# question is the opposite — that is behaviour, it may be caused by the thing under test,
+# and it must keep counting against the arm it happened in. Do not add a "the agent asked
+# something" pattern here: it would only ever delete runs from whichever arm makes the
+# agent more deliberative, which is bias in the flattering direction.
+#
+# The match is gated on the agent having produced nothing. A run that finished the task and
+# merely mentioned "API error" somewhere in its narration is not an aborted run, and keying
+# on the log alone would misclassify it.
+INFRA_SIGNATURE="no quota|quota exceeded|rate limit|too many requests|not authenticated"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|401 unauthorized|api error|connection closed|connection reset"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|502 bad gateway|503 service unavailable|overloaded_error|network error"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|session limit|usage limit|limit reached|insufficient credit"
+
 AGENT_ABORTED=false
 ABORT_REASON=""
-if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" ]]; then
-  if grep -qiE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG"; then
+# F13 is "timeout/rate limit", F15 is "evaluator/infrastructure". Both are excluded from
+# comparisons; which one is recorded is a statement about what went wrong, and the taxonomy
+# is worth nothing if it is not accurate.
+ABORT_CLASS="F13"
+PRODUCED_NOTHING=false
+[[ "$(jq -r 'length' <<<"$CHANGED_FILES")" == "0" ]] && PRODUCED_NOTHING=true
+
+if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" && "$PRODUCED_NOTHING" == true ]]; then
+  if grep -qiE "$INFRA_SIGNATURE" "$AGENT_LOG"; then
     AGENT_ABORTED=true
-    ABORT_REASON="$(grep -ioE "no quota|quota exceeded|rate limit|too many requests|not authenticated|401 unauthorized" "$AGENT_LOG" | head -1)"
+    ABORT_REASON="$(grep -ioE "$INFRA_SIGNATURE" "$AGENT_LOG" | head -1)"
   fi
 fi
 
@@ -396,8 +443,64 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     jq -r '"    model calls \(.behavior.modelCalls)   tool calls \(.behavior.toolCalls)   " +
            "tokens ↑\(.efficiency.inputTokens) ↓\(.efficiency.outputTokens)"' <<<"$TELEMETRY"
     jq -r '.toolBreakdown[] | "    \(.calls)× \(.tool)"' <<<"$TELEMETRY"
+
+    # The leak this asserts against was found by reading what runs actually did, after a
+    # flag was already believed to close it. A fix is confirmed by the symptom failing to
+    # reappear, not by the story that motivated it — so the symptom is checked on every run
+    # from now on. If a skill executes despite --disable-slash-commands, the run measured
+    # the operator's plugins as well as the variant, and it is not evidence about either.
+    # The signature list above is a convenience for *naming* the cause, and it will always
+    # be incomplete: it was extended for "API Error" and the very next batch died on
+    # "You've hit your session limit", a phrase it did not contain. Sixteen runs recorded
+    # F03 "incorrect code" for a billing state. That is the fourth costume of the same bug,
+    # and the fourth time it was fixed per-phrase instead of per-class.
+    #
+    # So the deciding rule is not a phrase. An agent that changed no file *and called no
+    # tool* did not attempt the task and cannot have failed it — nothing it did was
+    # measured, because it did nothing. Whatever stopped it was environmental by
+    # construction. This needs no vocabulary and does not go stale.
+    #
+    # It stays narrow on purpose. A run that explored and then stalled has tool calls, so it
+    # is untouched and keeps counting against its arm — which is what must happen when the
+    # thing under test is what made the agent hesitate.
+    TOOL_CALLS_SEEN="$(jq -r '.behavior.toolCalls // 0' <<<"$TELEMETRY")"
+    MODEL_CALLS_SEEN="$(jq -r '.behavior.modelCalls // 0' <<<"$TELEMETRY")"
+    if [[ "$PRODUCED_NOTHING" == true && "${TOOL_CALLS_SEEN:-0}" -eq 0 && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F13"
+      ABORT_REASON="the agent changed no file and called no tool — it never acted"
+    # Amendment 1(3), the other half. A run that *did* change files but reports zero model
+    # calls and zero tool calls did not run for free — the collector missed it. Cost and tool
+    # calls are registered outcomes, so this run has no measurement of the things being
+    # compared, whatever its diff looks like. Entering it as a zero would read as the
+    # cheapest run in its arm, and an outage landing in one arm would look like an efficiency
+    # win. Caught here rather than only in the analyser so it is replaced, not merely refused.
+    elif [[ "${TOOL_CALLS_SEEN:-0}" -eq 0 && "${MODEL_CALLS_SEEN:-0}" -eq 0 && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="telemetry reports 0 model calls and 0 tool calls for a run that changed files — the collector missed it"
+    fi
+
+    SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"
+    if [[ "${SKILL_CALLS:-0}" -gt 0 ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="a plugin skill executed ${SKILL_CALLS}× despite --disable-slash-commands (harness bug #13)"
+      echo
+      echo "  !! CONTAMINATED: ${ABORT_REASON}"
+      echo "     The agent had tooling this experiment did not give it. Recorded as"
+      echo "     infrastructure so it is excluded and replaced, not averaged in."
+    fi
   else
     echo "    no telemetry found — behaviour metrics stay empty rather than guessed"
+    # Amendment 1(3): missing telemetry is not a measurement of zero. Combined with an empty
+    # diff there is nothing here to score either way, so the run is excluded rather than
+    # entered as a maximally cheap failure.
+    if [[ "$PRODUCED_NOTHING" == true && "$AGENT_ABORTED" != true ]]; then
+      AGENT_ABORTED=true
+      ABORT_CLASS="F15"
+      ABORT_REASON="no telemetry and no file changed — nothing about this run was measured"
+    fi
   fi
 fi
 
@@ -465,10 +568,10 @@ if [[ -s "$EVALUATION_JSON" ]]; then
   # §23: F13 is "timeout/rate limit", not F03 "incorrect code". Recording the true cause
   # is the whole point of having a taxonomy instead of a FAIL counter.
   if [[ "$AGENT_ABORTED" == true ]]; then
-    EVAL_PAYLOAD="$(jq -c '.failureClass = "F13" | .passed = false' <<<"$EVAL_PAYLOAD")"
+    EVAL_PAYLOAD="$(jq -c --arg c "$ABORT_CLASS" '.failureClass = $c | .passed = false' <<<"$EVAL_PAYLOAD")"
     echo
-    echo "  !! the agent never ran: ${ABORT_REASON}"
-    echo "     recorded as F13 (rate limit / quota), not F03 (incorrect code)."
+    echo "  !! this run is not evidence about the variant: ${ABORT_REASON}"
+    echo "     recorded as ${ABORT_CLASS} (infrastructure), not F03 (incorrect code)."
     echo "     EXCLUDE this run from comparisons — it measures your quota, not the variant."
   fi
 
