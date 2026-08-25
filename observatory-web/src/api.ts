@@ -182,6 +182,32 @@ export const fmtPercent = (v: number | null): string =>
 export const fmtNumber = (v: number | null, digits = 1): string =>
   v == null ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(digits);
 
+/**
+ * Whether a run's behaviour counters were actually reported.
+ *
+ * The API serializes BehaviorDto with `0` defaults, so an unreported counter arrives
+ * indistinguishable from a genuine zero. An agent run that made no model calls and no tool
+ * calls did not happen — so treat that combination as unreported rather than as a very
+ * efficient run, and render it as unknown rather than as a confident zero.
+ *
+ * Every run currently in this shape is an infrastructure failure — F13 (session/quota limit
+ * hit before the agent did anything) or F15 — already failed, already excluded by the §13.1
+ * gate, and already nulled by the analyzer. So this is not a live data-integrity problem; it
+ * is the dashboard being the last surface that still printed a confident 0 for a run that
+ * measured nothing. Do not assert the cause here: "not a measurement" is the whole claim.
+ *
+ * This mirrors `has_behavior_telemetry` in runner/analyze-experiment.py, which already
+ * refuses these values. Until the API records the fact directly (a `telemetryComplete`
+ * field), both sides have to infer it, and they must infer it the same way — otherwise the
+ * dashboard shows a number the analysis has thrown away.
+ */
+export const hasBehaviorTelemetry = (b: Behavior): boolean =>
+  !(b.modelCalls === 0 && b.toolCalls === 0);
+
+/** A behaviour counter, or '—' when the whole block is a telemetry gap. */
+export const fmtBehavior = (b: Behavior, value: number): string =>
+  hasBehaviorTelemetry(b) ? String(value) : '—';
+
 export const totalTokens = (e: Efficiency): number | null =>
   e.inputTokens == null && e.outputTokens == null
     ? null

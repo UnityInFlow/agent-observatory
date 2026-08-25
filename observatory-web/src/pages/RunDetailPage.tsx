@@ -1,5 +1,14 @@
 import { Link, useParams } from 'react-router-dom';
-import { api, fmtDuration, fmtPercent, fmtTokens, totalTokens, type Run } from '../api';
+import {
+  api,
+  fmtBehavior,
+  fmtDuration,
+  fmtPercent,
+  fmtTokens,
+  hasBehaviorTelemetry,
+  totalTokens,
+  type Run,
+} from '../api';
 import { useAsync } from '../useAsync';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -62,13 +71,29 @@ export default function RunDetailPage() {
 
         <div className="card">
           <h3>Behaviour</h3>
+          {/*
+            All six counters come from the same telemetry block, so when it is absent they
+            are all fabricated zeros — not just the two the guard inspects. Say so once,
+            loudly, rather than printing six confident zeros with a caveat elsewhere.
+          */}
+          {!hasBehaviorTelemetry(run.behavior) && (
+            <div className="notice">
+              Behaviour counters were not reported for this run. The API serialises them as
+              <code> 0</code> when absent, so these are <strong>unknown</strong>, not zero.
+              The analyzer excludes them from comparisons for the same reason.
+            </div>
+          )}
           <dl className="kv">
-            <Row label="Model calls">{run.behavior.modelCalls}</Row>
-            <Row label="Tool calls">{run.behavior.toolCalls}</Row>
-            <Row label="Tool failures">{run.behavior.toolFailures}</Row>
-            <Row label="Retries">{run.behavior.retries}</Row>
-            <Row label="Permission requests">{run.behavior.permissionRequests}</Row>
-            <Row label="Permission denials">{run.behavior.permissionDenials}</Row>
+            <Row label="Model calls">{fmtBehavior(run.behavior, run.behavior.modelCalls)}</Row>
+            <Row label="Tool calls">{fmtBehavior(run.behavior, run.behavior.toolCalls)}</Row>
+            <Row label="Tool failures">{fmtBehavior(run.behavior, run.behavior.toolFailures)}</Row>
+            <Row label="Retries">{fmtBehavior(run.behavior, run.behavior.retries)}</Row>
+            <Row label="Permission requests">
+              {fmtBehavior(run.behavior, run.behavior.permissionRequests)}
+            </Row>
+            <Row label="Permission denials">
+              {fmtBehavior(run.behavior, run.behavior.permissionDenials)}
+            </Row>
           </dl>
         </div>
 

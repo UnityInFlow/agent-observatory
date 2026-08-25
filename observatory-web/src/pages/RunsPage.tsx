@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api,
+  fmtBehavior,
   fmtDuration,
+  hasBehaviorTelemetry,
   fmtPercent,
   fmtTokens,
   totalTokens,
@@ -148,7 +150,16 @@ export default function RunsPage() {
                 </td>
                 <td className="num">{fmtDuration(run.efficiency.durationMs)}</td>
                 <td className="num">{fmtTokens(totalTokens(run.efficiency))}</td>
-                <td className="num">{run.behavior.toolCalls}</td>
+                <td
+                  className="num"
+                  title={
+                    hasBehaviorTelemetry(run.behavior)
+                      ? undefined
+                      : 'Behaviour counters were not reported for this run — unknown, not zero'
+                  }
+                >
+                  {fmtBehavior(run.behavior, run.behavior.toolCalls)}
+                </td>
                 <td className="num">{fmtPercent(run.evaluation?.acceptanceRate ?? null)}</td>
               </tr>
             ))}
