@@ -1,0 +1,85 @@
+# Three suites, three jobs, deliberately split.
+#
+# `make test` runs all three in sequence, which is right locally and wrong here: the runner
+# tests take seconds and the API tests take minutes, and a Python typo should not wait behind
+# Testcontainers pulling a Postgres image to tell you about itself.
+#
+# The runner job matters most. Those tests cover the statistics that decide a verdict —
+# the §13.1 quality gate, the arm-completeness checks, the MDE table. A bug there does not
+# crash; it produces a confident wrong answer, which is the failure mode this whole project
+# exists to avoid.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner:
+    name: runner — the statistics that decide a verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # No requirements file by design: "this machine has no scipy, and a benchmark harness
+      # should not need one." If that ever stops being true, this step is where it shows.
+      - name: Run analysis tests
+        run: python3 -m unittest discover -s runner -p 'test_*.py' -v
+
+  web:
+    name: web — type-check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: observatory-web/package-lock.json
+      - name: Install
+        working-directory: observatory-web
+        run: npm ci
+      - name: Lint
+        working-directory: observatory-web
+        run: npm run lint
+      - name: Type-check and build
+        working-directory: observatory-web
+        run: npm run build
+
+  api:
+    name: api — Spring Boot with Testcontainers
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+      # Testcontainers starts a real PostgreSQL. ubuntu-latest ships a running Docker
+      # daemon, so nothing extra is needed — but the first run pays for the image pull.
+      - name: Run API tests
+        working-directory: observatory-api
+        run: ./mvnw -B test
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: observatory-api/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14

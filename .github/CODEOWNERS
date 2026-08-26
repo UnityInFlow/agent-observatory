@@ -1,0 +1,7 @@
+* @hermanngeorge15
+
+# The parts that decide a verdict. A bug here does not crash — it returns a confident wrong
+# answer, and every result computed since inherits it.
+/runner/analyze-experiment.py   @hermanngeorge15
+/runner/derive-mde.py           @hermanngeorge15
+/runner/schemas/                @hermanngeorge15
