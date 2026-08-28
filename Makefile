@@ -173,7 +173,7 @@ demo: ## Seed a baseline-vs-instructions experiment (10 runs) so Compare is mean
 	@API=$(API_URL) WEB=$(WEB_URL) $(RUNNER)/seed-demo.sh
 
 .PHONY: run-benchmark
-run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUSTOMIZATION=)
+run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUSTOMIZATION= KEEP=1)
 	@API=$(API_URL) WEB=$(WEB_URL) TEMPO_URL=$(TEMPO_URL) \
 	  OTLP_HTTP_ENDPOINT=http://localhost:$(OTLP_HTTP_PORT) \
 	  OTLP_GRPC_ENDPOINT=http://localhost:$(OTLP_GRPC_PORT) \
@@ -185,10 +185,11 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 	    $${MODEL:+--model $$MODEL} \
 	    $${CUSTOMIZATION:+--customization $$CUSTOMIZATION} \
 	    $${ISOLATE_USER_SETTINGS:+--isolate-user-settings} \
+	    $${KEEP:+--keep} \
 	    $${INTERACTIVE:+--interactive}
 
 .PHONY: baseline-runs
-baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL=)
+baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL= KEEP=1)
 	@n=$${N:-5}; for i in $$(seq 1 $$n); do \
 	  echo ""; echo "================ baseline run $$i / $$n ================"; \
 	  $(MAKE) --no-print-directory run-benchmark || true; \
