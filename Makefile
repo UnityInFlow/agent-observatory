@@ -190,10 +190,33 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 
 .PHONY: baseline-runs
 baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL= KEEP=1)
-	@n=$${N:-5}; for i in $$(seq 1 $$n); do \
+# THE SAMPLE SIZE IS ASSERTED, NOT ASSUMED. `|| true` in the loop is right — one dead run
+# should not abandon a batch — but until 2026-08-28 nothing counted what survived, so a
+# batch of five where three died printed five banners and exited 0. A baseline reported at
+# n=5 that is really n=2 is not noisy; it is a different measurement.
+#
+# What is counted is RECORDED RUNS, not invocation exit codes. run-agent.sh exits with the
+# evaluator's code, so an agent that legitimately fails the benchmark exits non-zero and is
+# still a valid observation. Counting exits would discard exactly the runs B2 exists to see.
+	@exp="$${EXPERIMENT:-EXP-001}"; n=$${N:-5}; \
+	before=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
+	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
+	echo "==> $$exp held $$before run(s) before this batch"; \
+	for i in $$(seq 1 $$n); do \
 	  echo ""; echo "================ baseline run $$i / $$n ================"; \
 	  $(MAKE) --no-print-directory run-benchmark || true; \
-	done
+	done; \
+	after=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
+	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
+	added=$$((after - before)); \
+	echo ""; echo "==> $$added of $$n runs reached the observatory"; \
+	if [ "$$added" -ne "$$n" ]; then \
+	  echo ""; \
+	  echo "INCOMPLETE BATCH: asked for $$n, recorded $$added."; \
+	  echo "The missing runs never produced a record, so they are absent rather than failed."; \
+	  echo "Do not report this baseline at n=$$n. Re-run the shortfall or record the real n."; \
+	  exit 1; \
+	fi
 	@echo ""; echo "==> variance across the baseline"
 	@curl -fsS "$(API_URL)/api/experiments/$${EXPERIMENT:-EXP-001}/comparison" | jq '.'
 

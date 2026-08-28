@@ -91,8 +91,12 @@ WORKTREE="${TMPDIR:-/tmp}/observatory-run-${RUN_ID}"
 cleanup() {
   if [[ "$KEEP_WORKTREE" == true ]]; then
     echo "  worktree kept at $WORKTREE"
+    [[ -d "${WORKTREE}.codex-home" ]] && echo "  isolated codex home kept at ${WORKTREE}.codex-home"
   else
     rm -rf "$WORKTREE"
+    # The isolated codex home lives beside the worktree and holds session state and sqlite
+    # files codex writes during the run. It is disposable for the same reason the worktree is.
+    rm -rf "${WORKTREE}.codex-home"
   fi
 }
 trap cleanup EXIT
@@ -172,6 +176,24 @@ if [[ "$RUNTIME" != "manual" ]]; then
     || die "could not determine the version of '$RUNTIME'"
 fi
 RUNTIME_VERSION="${RUNTIME_VERSION:-unknown}"
+
+# --- the run record must not claim a model the runtime was never told ------
+# `runtime.model` is written from $AGENT_MODEL, which is what the CALLER asked for. Until
+# 2026-08-28 the codex arm accepted --model and never forwarded it, so a run invoked with
+# MODEL=x recorded model:x while codex used whatever ~/.codex/config.toml selected. That is
+# not a missing control — it is a provenance field that is wrong in the direction that looks
+# correct, on the experiment's own independent variable.
+#
+# This is the L2 half: something executes and refuses. Every non-manual arm forwards --model
+# today; if one ever stops, this fails the run instead of recording the claim.
+case "$RUNTIME" in
+  copilot|claude|codex) MODEL_FORWARDED=true ;;
+  *)                    MODEL_FORWARDED=false ;;
+esac
+if [[ -n "$AGENT_MODEL" && "$MODEL_FORWARDED" != true ]]; then
+  die "--model '$AGENT_MODEL' is not forwarded to runtime '$RUNTIME'.
+    Recording it would put a model in runtime.model that never ran."
+fi
 
 # --- 5. install and hash the customization (§12) ----------------------------
 # The commit the *evaluation* measures against — always a setup commit, never the raw
@@ -352,11 +374,80 @@ case "$RUNTIME" in
     fi
     ;;
   codex)
+    # PARITY WITH THE OTHER TWO ARMS, and every flag below has an analogue there. Until
+    # 2026-08-28 this arm was `codex exec "$(cat task.md)"` and nothing else: no model, no
+    # sandbox policy, no isolation. It had never run, so nothing on record is affected —
+    # which is exactly why it had to change before the first codex run rather than after.
+    #
+    #   --sandbox danger-full-access   the analogue of copilot's --allow-all-paths and of
+    #                                  claude running unsandboxed under acceptEdits. NOT a
+    #                                  convenience: the task instructs the agent to run
+    #                                  ./mvnw test, and Maven writes to ~/.m2 and fetches
+    #                                  over the network. Under workspace-write this arm
+    #                                  would fail the build for a reason the other two never
+    #                                  meet, and the evaluator would record it as incorrect
+    #                                  code. Approval policy is already `never` in exec
+    #                                  mode, so no approval flag is needed to keep it
+    #                                  headless.
+    #   --color never                  copilot's --no-color
+    #   --model                        pinned, as on both other arms
+    #
+    # NOT --approve-for-me: it adds an automatic reviewer the other arms do not have, which
+    # is a behaviour change wearing an isolation flag's clothes.
+    CODEX_ARGS=(--sandbox danger-full-access --color never)
+    [[ -n "$AGENT_MODEL" ]] && CODEX_ARGS+=(--model "$AGENT_MODEL")
+
+    # ISOLATION IS AN ENVIRONMENT, NOT A FLAG, AND THAT WAS MEASURED RATHER THAN READ.
+    # `--ignore-user-config` says only "do not load $CODEX_HOME/config.toml". Tested
+    # 2026-08-28 with a marker instruction in $CODEX_HOME/AGENTS.md: with the flag, the
+    # model still emitted the marker. Global instructions survive it. With CODEX_HOME
+    # pointed at a directory holding auth.json alone, the marker was gone.
+    #
+    # That matters here because ~/.codex on this operator's machine carries AGENTS.md
+    # (importing a 32-line shell-routing instruction file), 3 MCP servers — one of them a
+    # code-search tool — 71 skills, 66 agents, 2 hooks and a plugin. A "plain baseline" run
+    # would carry a global instruction file, which is B3's treatment sitting inside B2's
+    # control.
+    #
+    # This is L2, not L1: nothing stops someone writing an AGENTS.md into this directory
+    # after it is built. What makes it a control is that the runner rebuilds it per run and
+    # asserts its contents below.
+    CODEX_HOME_ISOLATED=""
+    if [[ "$ISOLATE_USER_SETTINGS" == true ]]; then
+      CODEX_HOME_ISOLATED="${WORKTREE}.codex-home"
+      rm -rf "$CODEX_HOME_ISOLATED"
+      mkdir -p "$CODEX_HOME_ISOLATED"
+      if [[ -r "${CODEX_HOME:-$HOME/.codex}/auth.json" ]]; then
+        cp "${CODEX_HOME:-$HOME/.codex}/auth.json" "$CODEX_HOME_ISOLATED/auth.json"
+      else
+        die "codex isolation needs auth.json from ${CODEX_HOME:-$HOME/.codex}; not found"
+      fi
+      # A REGRESSION GUARD ON THIS FUNCTION, not a control over the operator's machine —
+      # said plainly because this project has repeatedly mistaken one for the other. The
+      # directory was created three lines up, so today the loop cannot fire. It fires when
+      # someone later adds a second `cp` here, which is the realistic way this isolation
+      # gets undone.
+      for forbidden in AGENTS.md config.toml instructions.md; do
+        [[ -e "$CODEX_HOME_ISOLATED/$forbidden" ]] \
+          && die "isolated CODEX_HOME contains $forbidden — refusing to record this as an isolated run"
+      done
+      echo "  codex isolated: CODEX_HOME=$CODEX_HOME_ISOLATED (auth.json only)"
+    fi
+
+    # Exported inside the subshell rather than through an env array: an empty array under
+    # `set -u` is an error on bash before 4.4, and this script's shebang does not pin one.
     if [[ "$INTERACTIVE" == true ]]; then
-      ( cd "$WORKTREE" && codex ) || echo "run-agent: codex exited non-zero — recording the run anyway"
+      (
+        cd "$WORKTREE" || exit 1
+        [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        codex "${CODEX_ARGS[@]}"
+      ) || echo "run-agent: codex exited non-zero — recording the run anyway"
     else
-      ( cd "$WORKTREE" && codex exec "$(cat "$BENCH_DIR/task.md")" ) \
-        2>&1 | tee "$AGENT_LOG" \
+      (
+        cd "$WORKTREE" || exit 1
+        [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        codex exec "${CODEX_ARGS[@]}" "$(cat "$BENCH_DIR/task.md")"
+      ) 2>&1 | tee "$AGENT_LOG" \
         || echo "run-agent: codex exited non-zero — recording the run anyway"
     fi
     ;;
