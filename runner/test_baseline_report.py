@@ -28,7 +28,8 @@ _ids = itertools.count()
 
 def run(experiment="EXP-B", *, passed=True, failure=None, tool_calls=10, model_calls=12,
         cost=0.2, duration_ms=100_000, cached=400_000, created=20_000,
-        evaluated=True, model="haiku", version="1.0.0"):
+        evaluated=True, model="haiku", version="1.0.0",
+        input_tokens=20_000, output_tokens=8_000, reported_total=None):
     behavior = {
         "modelCalls": model_calls, "toolCalls": tool_calls, "toolFailures": 0,
         "retries": 0, "permissionRequests": 0, "permissionDenials": 0,
@@ -42,6 +43,8 @@ def run(experiment="EXP-B", *, passed=True, failure=None, tool_calls=10, model_c
         "efficiency": {
             "durationMs": duration_ms, "estimatedCost": cost,
             "cachedTokens": cached, "cacheCreationTokens": created,
+            "inputTokens": input_tokens, "outputTokens": output_tokens,
+            "reportedTotalTokens": reported_total,
         },
         "result": {"changedFiles": ["a.kt"], "addedLines": 10, "deletedLines": 0},
     }
@@ -169,6 +172,27 @@ class MissingTelemetry(unittest.TestCase):
         runs = [run(cost=None) for _ in range(3)]
         out, _ = render(runs)
         self.assertIn("not measured on any run", out)
+
+
+class TotalTokens(unittest.TestCase):
+    def test_a_breakdown_wins_over_a_reported_total(self):
+        """Same precedence as the API's totalTokens(); the two must not disagree."""
+        m = br.metrics(run(input_tokens=20_000, output_tokens=8_000, reported_total=99)["_r"]
+                       if False else
+                       {"efficiency": {"inputTokens": 20_000, "outputTokens": 8_000,
+                                       "reportedTotalTokens": 99},
+                        "behavior": {"modelCalls": 1, "toolCalls": 1}})
+        self.assertEqual(m["totalTokens"], 28_000)
+
+    def test_a_reported_total_is_used_when_there_is_no_breakdown(self):
+        """Codex prints one `tokens used` line and no split."""
+        m = br.metrics({"efficiency": {"reportedTotalTokens": 50_891},
+                        "behavior": {}})
+        self.assertEqual(m["totalTokens"], 50_891)
+
+    def test_absent_everywhere_stays_absent(self):
+        m = br.metrics({"efficiency": {}, "behavior": {}})
+        self.assertIsNone(m["totalTokens"])
 
 
 class Constancy(unittest.TestCase):

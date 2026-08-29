@@ -104,6 +104,7 @@ class RunService(
                 outputTokens = request.efficiency.outputTokens,
                 cachedTokens = request.efficiency.cachedTokens,
                 cacheCreationTokens = request.efficiency.cacheCreationTokens,
+                reportedTotalTokens = request.efficiency.reportedTotalTokens,
                 estimatedCost = request.efficiency.estimatedCost,
             ),
             result = ChangeSummary(
@@ -267,20 +268,23 @@ class RunService(
                 }
                 ?: CustomizationDto(),
             behavior = BehaviorDto(
-                run.behavior.modelCalls,
-                run.behavior.toolCalls,
-                run.behavior.toolFailures,
-                run.behavior.retries,
-                run.behavior.permissionRequests,
-                run.behavior.permissionDenials,
+                modelCalls = run.behavior.modelCalls,
+                toolCalls = run.behavior.toolCalls,
+                toolFailures = run.behavior.toolFailures,
+                retries = run.behavior.retries,
+                permissionRequests = run.behavior.permissionRequests,
+                permissionDenials = run.behavior.permissionDenials,
             ),
+            // Named, not positional. Adding reportedTotalTokens ahead of estimatedCost in a
+            // positional call would have shifted the cost into it silently and compiled.
             efficiency = EfficiencyDto(
-                run.efficiency.durationMs,
-                run.efficiency.inputTokens,
-                run.efficiency.outputTokens,
-                run.efficiency.cachedTokens,
-                run.efficiency.cacheCreationTokens,
-                run.efficiency.estimatedCost,
+                durationMs = run.efficiency.durationMs,
+                inputTokens = run.efficiency.inputTokens,
+                outputTokens = run.efficiency.outputTokens,
+                cachedTokens = run.efficiency.cachedTokens,
+                cacheCreationTokens = run.efficiency.cacheCreationTokens,
+                reportedTotalTokens = run.efficiency.reportedTotalTokens,
+                estimatedCost = run.efficiency.estimatedCost,
             ),
             result = ResultDto(
                 changedFiles = run.result.changedFiles?.lines()?.filter { it.isNotBlank() } ?: emptyList(),

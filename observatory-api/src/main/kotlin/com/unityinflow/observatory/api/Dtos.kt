@@ -63,6 +63,12 @@ data class EfficiencyDto(
     val cachedTokens: Long? = null,
     /** Cache creations — separate from reads because they are priced differently. */
     val cacheCreationTokens: Long? = null,
+    /**
+     * A total reported directly by a runtime that gives no input/output split — `codex exec`
+     * prints one `tokens used` line and nothing else. Null wherever a breakdown exists,
+     * because there input + output already IS the total. See V5.
+     */
+    val reportedTotalTokens: Long? = null,
     val estimatedCost: BigDecimal? = null,
 )
 

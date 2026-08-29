@@ -563,6 +563,33 @@ fi
 BEHAVIOR='{}'
 EFFICIENCY_EXTRA='{}'
 TRACE_ID=""
+
+# CODEX REPORTS ONE NUMBER, AND IT WAS BEING THROWN AWAY.
+# `codex exec` has no OTel path (ADR-001, #10), so this arm records null tokens and null
+# cost — while printing its own total on the last line of the log:
+#
+#     tokens used
+#     32 386
+#
+# That is not telemetry parity and it is not pretending to be: no input/output split, no
+# cache figures, no cost. It is the one number the runtime states, and recording it beats
+# recording nothing while the arm sits next to one reporting 8876 output tokens and $0.185.
+#
+# It lands in `reportedTotalTokens`, its own field (V5), NOT in outputTokens. Putting a
+# total where a component belongs is the V4 mistake wearing a different name — a field that
+# means one thing carrying a value that means another, in the direction that looks like data.
+if [[ "$RUNTIME" == "codex" && -f "$AGENT_LOG" ]]; then
+  # The count follows the label on the next line, and codex writes thousands separated by a
+  # space ("32 386"), so the digits are joined rather than read as the first group.
+  codex_tokens="$(awk '/^tokens used$/ { getline; gsub(/[^0-9]/, "", $0); if ($0 != "") print $0; exit }' "$AGENT_LOG")"
+  if [[ -n "$codex_tokens" ]]; then
+    EFFICIENCY_EXTRA="$(jq -cn --argjson t "$codex_tokens" '{reportedTotalTokens: $t}')"
+    echo "    codex reported ${codex_tokens} tokens (total only — no split, no cost)"
+  else
+    echo "    codex reported no token total in its log" >&2
+  fi
+fi
+
 if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
   echo
   if [[ "$RUNTIME" == "copilot" ]]; then

@@ -54,6 +54,7 @@ MIN_RUNS = 3
 OUTCOMES = [
     ("duration", "duration (s)", "{:.0f}"),
     ("cost", "estimated cost", "{:.4f}"),
+    ("totalTokens", "total tokens", "{:.0f}"),
     ("toolCalls", "tool calls", "{:.0f}"),
     ("modelCalls", "model calls", "{:.0f}"),
     ("cacheTokens", "cache tokens", "{:.0f}"),
@@ -78,8 +79,15 @@ def metrics(run):
     read, created = e.get("cachedTokens"), e.get("cacheCreationTokens")
     cache = None if read is None and created is None else (read or 0) + (created or 0)
     telemetry = has_behavior_telemetry(run)
+    # Same precedence as the API's totalTokens(): a runtime that reports a breakdown has said
+    # something more precise than a total, so the breakdown wins. Codex reports only a total.
+    if e.get("inputTokens") is None and e.get("outputTokens") is None:
+        total = e.get("reportedTotalTokens")
+    else:
+        total = (e.get("inputTokens") or 0) + (e.get("outputTokens") or 0)
     return {
         "cost": e.get("estimatedCost"),
+        "totalTokens": total,
         "duration": ((e.get("durationMs") or 0) / 1000) or None,
         "toolCalls": b.get("toolCalls") if telemetry else None,
         "modelCalls": b.get("modelCalls") if telemetry else None,

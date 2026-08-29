@@ -273,6 +273,48 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `a runtime that reports only a total gets its own field, and a breakdown still wins`() {
+        registerBenchmark("BE-FLOW-TOTALTOKENS")
+
+        // Codex prints one `tokens used` line and nothing else — no split, no cost. Before
+        // V5 there was nowhere to put it, so the arm recorded null tokens beside an arm
+        // reporting 8876 output tokens. The total must NOT land in outputTokens.
+        val codexish = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-TOTALTOKENS",
+                  "benchmarkId": "BE-FLOW-TOTALTOKENS",
+                  "variant": "baseline",
+                  "runtime": { "provider": "openai", "product": "codex", "version": "0.147.0", "model": "gpt-x" },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 93000, "reportedTotalTokens": 32386 },
+                  "result": { "changedFiles": ["a.kt"], "addedLines": 64, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+
+        mockMvc.perform(get("/api/runs/${JsonPath.read<String>(codexish, "$.runId")}"))
+            .andExpect(jsonPath("$.efficiency.reportedTotalTokens").value(32386))
+            // The split stays absent rather than being invented from the total.
+            .andExpect(jsonPath("$.efficiency.inputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.outputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.estimatedCost").doesNotExist())
+
+        // And the precedence: a runtime that reports a breakdown has said something more
+        // precise than a total, so the breakdown wins and the field stays null.
+        val withSplit = createRun(
+            "BE-FLOW-TOTALTOKENS", "EXP-TOTALTOKENS", "baseline",
+            toolCalls = 5, durationMs = 1000,
+        )
+        mockMvc.perform(get("/api/runs/$withSplit"))
+            .andExpect(jsonPath("$.efficiency.inputTokens").value(20000))
+            .andExpect(jsonPath("$.efficiency.reportedTotalTokens").doesNotExist())
+    }
+
+    @Test
     fun `discards a run invalidated by the harness, including its evaluation`() {
         registerBenchmark("BE-FLOW-7")
         val keep = createRun("BE-FLOW-7", "EXP-DELETE", "baseline", toolCalls = 13, durationMs = 40_000)

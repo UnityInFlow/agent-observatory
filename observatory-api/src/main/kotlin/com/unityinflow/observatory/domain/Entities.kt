@@ -155,12 +155,26 @@ class EfficiencyMetrics(
     @Column(name = "cache_creation_tokens")
     var cacheCreationTokens: Long? = null,
 
+    /**
+     * A total the runtime reported directly, for runtimes that give no split — see
+     * V5__reported_total_tokens.sql. Codex prints one `tokens used` line and nothing else.
+     *
+     * Null wherever a real breakdown exists, because there input + output already IS the
+     * total and a second copy could disagree with it.
+     */
+    @Column(name = "reported_total_tokens")
+    var reportedTotalTokens: Long? = null,
+
     @Column(name = "estimated_cost")
     var estimatedCost: BigDecimal? = null,
 ) {
     /** Null when the runtime exposes no token information at all, rather than 0. */
+    /**
+     * The breakdown wins when it exists. A runtime that reports input and output has said
+     * something more precise than a total, and preferring the total there would discard it.
+     */
     fun totalTokens(): Long? =
-        if (inputTokens == null && outputTokens == null) null
+        if (inputTokens == null && outputTokens == null) reportedTotalTokens
         else (inputTokens ?: 0L) + (outputTokens ?: 0L)
 }
 
