@@ -90,7 +90,7 @@ class RunService(
             commitSha = request.repository.commitSha,
             dirtyBeforeRun = request.repository.dirtyBeforeRun,
             customizationId = customizationId,
-            behavior = BehaviorMetrics(
+            behaviorOrNull = BehaviorMetrics(
                 modelCalls = request.behavior.modelCalls,
                 toolCalls = request.behavior.toolCalls,
                 toolFailures = request.behavior.toolFailures,

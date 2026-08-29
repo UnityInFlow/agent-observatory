@@ -228,6 +228,51 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `an unmeasured behaviour counter is null, and a measured zero is still zero`() {
+        registerBenchmark("BE-FLOW-NULLBEHAVIOR")
+
+        // An arm with no telemetry path — the codex arm posts exactly this. Before V4 the
+        // record answered "0 model calls, 0 tool calls" for a run that changed two files
+        // and added 64 lines, which is not a noisy measurement but a false one.
+        val unmeasured = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-NULLBEHAVIOR",
+                  "benchmarkId": "BE-FLOW-NULLBEHAVIOR",
+                  "variant": "baseline",
+                  "runtime": { "provider": "openai", "product": "codex", "version": "0.147.0", "model": "gpt-x" },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 93000 },
+                  "result": { "changedFiles": ["a/Shipment.kt"], "addedLines": 64, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+        val unmeasuredId = JsonPath.read<String>(unmeasured, "$.runId")
+
+        mockMvc.perform(get("/api/runs/$unmeasuredId"))
+            .andExpect(jsonPath("$.behavior.modelCalls").doesNotExist())
+            .andExpect(jsonPath("$.behavior.toolCalls").doesNotExist())
+            .andExpect(jsonPath("$.behavior.permissionDenials").doesNotExist())
+            // The same record already reported null for absent efficiency fields. The point
+            // of V4 is that both halves now agree.
+            .andExpect(jsonPath("$.efficiency.inputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.durationMs").value(93000))
+
+        // And the other half of the distinction: a real zero must survive as a zero, or the
+        // fix has replaced one lie with another.
+        val measuredZero = createRun(
+            "BE-FLOW-NULLBEHAVIOR", "EXP-NULLBEHAVIOR", "baseline",
+            toolCalls = 0, durationMs = 1000,
+        )
+        mockMvc.perform(get("/api/runs/$measuredZero"))
+            .andExpect(jsonPath("$.behavior.toolCalls").value(0))
+            .andExpect(jsonPath("$.behavior.modelCalls").value(6))
+    }
+
+    @Test
     fun `discards a run invalidated by the harness, including its evaluation`() {
         registerBenchmark("BE-FLOW-7")
         val keep = createRun("BE-FLOW-7", "EXP-DELETE", "baseline", toolCalls = 13, durationMs = 40_000)

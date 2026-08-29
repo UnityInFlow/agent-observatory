@@ -38,13 +38,21 @@ data class CustomizationDto(
         listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash).all { it == null }
 }
 
+/**
+ * Nullable, matching [EfficiencyDto] rather than contradicting it inside the same record.
+ *
+ * A 0 default made a collector gap indistinguishable from a genuine zero, and every reader
+ * had to know that — `analyze-experiment.py` carried a `has_behavior_telemetry()` heuristic
+ * to undo it while the API, the web UI and Prometheus all read the zeros literally. `null`
+ * is "not measured"; `0` is "measured as zero".
+ */
 data class BehaviorDto(
-    val modelCalls: Int = 0,
-    val toolCalls: Int = 0,
-    val toolFailures: Int = 0,
-    val retries: Int = 0,
-    val permissionRequests: Int = 0,
-    val permissionDenials: Int = 0,
+    val modelCalls: Int? = null,
+    val toolCalls: Int? = null,
+    val toolFailures: Int? = null,
+    val retries: Int? = null,
+    val permissionRequests: Int? = null,
+    val permissionDenials: Int? = null,
 )
 
 data class EfficiencyDto(

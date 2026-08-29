@@ -74,13 +74,22 @@ def dig(obj, dotted):
 
 def has_behavior_telemetry(run):
     """
-    The API serializes BehaviorDto with 0 defaults, so a collector or adapter gap is
-    indistinguishable from a genuine zero. An agent run with no model calls and no tool
-    calls did not happen, so treat that combination as missing telemetry rather than as a
-    very efficient run — otherwise an outage concentrated in one arm reads as an
-    improvement, which is the direction of error this project keeps making.
+    Since API V4 the record answers this itself: `null` is "never collected", `0` is
+    "measured as zero". Prefer that answer.
+
+    The all-zero heuristic stays as a FALLBACK for rows written before V4, which cannot be
+    disambiguated retroactively — the API serialized BehaviorDto with 0 defaults, so a
+    collector or adapter gap was indistinguishable from a genuine zero. An agent run with no
+    model calls and no tool calls did not happen, so that combination is missing telemetry
+    rather than a very efficient run — otherwise an outage concentrated in one arm reads as
+    an improvement, which is the direction of error this project keeps making.
+
+    Do not delete the fallback when the last pre-V4 row is gone: it also catches an adapter
+    that starts posting zeros again, which is how this arrived the first time.
     """
     b = run.get("behavior") or {}
+    if b.get("modelCalls") is None and b.get("toolCalls") is None:
+        return False
     return not (b.get("modelCalls", 0) == 0 and b.get("toolCalls", 0) == 0)
 
 
