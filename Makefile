@@ -188,6 +188,10 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 	    $${KEEP:+--keep} \
 	    $${INTERACTIVE:+--interactive}
 
+.PHONY: baseline-report
+baseline-report: ## Single-arm baseline: median and range, never a mean (EXPERIMENT=)
+	@$(RUNNER)/baseline-report.py $${EXPERIMENT:?set EXPERIMENT=} --api $(API_URL)
+
 .PHONY: baseline-runs
 baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL= KEEP=1)
 # THE SAMPLE SIZE IS ASSERTED, NOT ASSUMED. `|| true` in the loop is right — one dead run
