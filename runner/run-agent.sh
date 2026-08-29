@@ -66,6 +66,48 @@ done
 die() { echo "run-agent: $*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
+# --- 3b. remove terminal wrappers from PATH --------------------------------
+# THE AGENT MUST BE THE AGENT, NOT THE AGENT PLUS WHATEVER LAUNCHED THIS SCRIPT.
+#
+# Some terminal hosts install shims ahead of the real CLI on PATH. cmux does: it puts
+# $TMPDIR/cmux-cli-shims/<id>/{claude,codex} first, and each shim execs a wrapper that
+# APPENDS ARGUMENTS THIS SCRIPT NEVER PASSED --
+#
+#   cmux-claude-wrapper:  exec "$REAL_CLAUDE" --session-id <id> --settings "$HOOKS_JSON" "$@"
+#   cmux-codex-wrapper:   injects --dangerously-bypass-hook-trust and -c hooks.X=...
+#
+# Measured 2026-08-29 on run 092a384a, launched from inside such a terminal: 12 hooks with
+# `hook_source: flagSettings` registered and executed, including three on Stop. All 172
+# runs recorded before it — launched elsewhere — have zero. Nothing in the run record
+# distinguishes the two: `customization.hooksHash` hashes the repository's files, and these
+# arrive on the command line. The wrapper's hooks act on PreToolUse and PermissionRequest,
+# which is exactly where agent behaviour is decided.
+#
+# So a run launched from that terminal is a different experiment from one launched in a
+# plain shell, and the record cannot tell them apart. That is the harness measuring itself
+# again, and it is the reason this strips rather than trusts.
+#
+# Belt and braces, because either alone is one assumption:
+#   PATH        drop every cmux-cli-shims entry, so the real binary is resolved
+#   env         set the wrappers' own documented off switches, in case a shim is reached
+#               by a path this does not recognise
+# The list is intentionally specific. A generic "strip anything odd" would silently change
+# which binary runs, which is the failure this is preventing.
+PATH_BEFORE_SHIM_STRIP="$PATH"
+CLEAN_PATH=""
+while IFS= read -r entry; do
+  case "$entry" in
+    */cmux-cli-shims|*/cmux-cli-shims/*) continue ;;
+  esac
+  CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$entry"
+done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+if [[ "$CLEAN_PATH" != "$PATH_BEFORE_SHIM_STRIP" ]]; then
+  export PATH="$CLEAN_PATH"
+  echo "  stripped terminal CLI shims from PATH — the agent runs the real binary"
+fi
+export CMUX_CLAUDE_HOOKS_DISABLED=1 CMUX_CODEX_HOOKS_DISABLED=1
+WRAPPER_STRIPPED=$([[ "$CLEAN_PATH" != "$PATH_BEFORE_SHIM_STRIP" ]] && echo true || echo false)
+
 # shellcheck source=lib/evaluation-payload.sh
 source "$HERE/lib/evaluation-payload.sh"
 
@@ -154,6 +196,10 @@ echo "=============================================================="
 echo " run        ${RUN_ID}"
 echo " benchmark  ${BENCHMARK_ID}   variant ${VARIANT}   experiment ${EXPERIMENT}"
 echo " runtime    ${RUNTIME}"
+echo " binary     $(command -v "$RUNTIME" 2>/dev/null || echo n/a)"
+echo " shims      $([[ "$WRAPPER_STRIPPED" == true ]] \
+                    && echo "stripped from PATH (a terminal wrapper was in front of the real CLI)" \
+                    || echo "none found on PATH")"
 echo " worktree   ${WORKTREE}"
 echo " baseline   ${BASELINE_SHA:0:12}"
 echo "=============================================================="
