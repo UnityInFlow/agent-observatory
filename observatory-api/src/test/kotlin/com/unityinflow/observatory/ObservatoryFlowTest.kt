@@ -273,6 +273,54 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `an unrecorded arm surface is null, and a measured un-isolated run is false`() {
+        registerBenchmark("BE-FLOW-SURFACE")
+
+        // What #65 cost: the codex arm read 240 lines of the operator's skills and the
+        // record said nothing, because there was nowhere for it to say anything. This is
+        // the row that arm posts now — measured, and the plugins carry the version a
+        // server chose at run time, so two runs a week apart are distinguishable.
+        val measured = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-SURFACE",
+                  "benchmarkId": "BE-FLOW-SURFACE",
+                  "variant": "baseline",
+                  "runtime": {
+                    "provider": "openai", "product": "codex", "version": "0.147.0",
+                    "model": "gpt-x",
+                    "userSettingsIsolated": true, "shimsStripped": false,
+                    "surface": "systemSkills=imagegen,openai-docs; remotePlugins=none"
+                  },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 1000 },
+                  "result": { "changedFiles": ["a/Shipment.kt"], "addedLines": 1, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+
+        mockMvc.perform(get("/api/runs/${JsonPath.read<String>(measured, "$.runId")}"))
+            .andExpect(jsonPath("$.runtime.userSettingsIsolated").value(true))
+            // false is a MEASUREMENT: the runner looked for a terminal shim and found none.
+            // It must survive as false and never be flattened into the null below.
+            .andExpect(jsonPath("$.runtime.shimsStripped").value(false))
+            .andExpect(jsonPath("$.runtime.surface").value("systemSkills=imagegen,openai-docs; remotePlugins=none"))
+
+        // The 172 runs recorded before any of this was captured. Null means nobody looked.
+        // Defaulting these to false would say the harness checked and the run was not
+        // isolated — a claim about runs where no such check existed, which is V4's mistake
+        // with a different column name.
+        val legacy = createRun("BE-FLOW-SURFACE", "EXP-SURFACE", "baseline", toolCalls = 3, durationMs = 1000)
+        mockMvc.perform(get("/api/runs/$legacy"))
+            .andExpect(jsonPath("$.runtime.userSettingsIsolated").doesNotExist())
+            .andExpect(jsonPath("$.runtime.shimsStripped").doesNotExist())
+            .andExpect(jsonPath("$.runtime.surface").doesNotExist())
+    }
+
+    @Test
     fun `a runtime that reports only a total gets its own field, and a breakdown still wins`() {
         registerBenchmark("BE-FLOW-TOTALTOKENS")
 

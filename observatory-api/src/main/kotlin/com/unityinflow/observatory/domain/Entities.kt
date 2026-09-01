@@ -98,6 +98,18 @@ class AgentRuntime(
     var version: String? = null,
 
     var model: String? = null,
+
+    // Nullable for the same reason the six behaviour counters are — V6__agent_surface.sql.
+    // Null is "nobody measured this run", which is the truth for all 172 runs recorded
+    // before 2026-09-01. A Boolean here would make them all look deliberately un-isolated.
+    @Column(name = "user_settings_isolated")
+    var userSettingsIsolated: Boolean? = null,
+
+    @Column(name = "shims_stripped")
+    var shimsStripped: Boolean? = null,
+
+    @Column(name = "agent_surface")
+    var surface: String? = null,
 )
 
 /**

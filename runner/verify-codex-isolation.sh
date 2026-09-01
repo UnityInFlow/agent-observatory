@@ -21,13 +21,20 @@
 #
 # Costs two small codex calls. Not in CI: it needs authentication and spends quota.
 #
-# TWO CHECKS, TWO DIFFERENT CLAIMS, AND THEY ARE NOT THE SAME CLAIM.
+# THREE CHECKS, THREE DIFFERENT CLAIMS, AND THEY ARE NOT THE SAME CLAIM.
 #   A. AUTO-LOADING — does a global AGENTS.md reach the model on its own?
 #      Closed by a clean CODEX_HOME. This is what the file originally tested.
 #   B. DELIBERATE READING — will the agent go and read the operator's instructions itself?
 #      NOT closed by A, and observatory#65 is the record of finding that out the hard way:
 #      all seven codex runs on 2026-08-30 opened by reading ~/.agents/skills/*/SKILL.md
 #      before touching their worktree. Closed — at L2 — by redirecting HOME.
+#   C. NETWORK INSTALLATION — does codex pull skills into the isolated home from OpenAI's
+#      remote-plugin catalogue? Neither A nor B touches it: both are about this machine,
+#      and C is about a third party who can change what arrives between two runs of one
+#      batch. Closed by `--disable plugins`, and NOT by `--disable remote_plugin`.
+#
+# Costs: A and B need a model answer each. C does not — the install happens at startup, so
+# C still reports correctly when the account is out of quota.
 #
 # Measured 2026-09-01: `--sandbox workspace-write` does NOT close B. It restricts writes,
 # not reads. Do not substitute it for the HOME redirection.
@@ -130,8 +137,60 @@ if grep -qE "$HOME/\.agents/|$HOME/\.codex/skills" <<<"$hidden_out"; then
   exit 2
 fi
 echo "  operator instruction files not reached"
+
+# --- C. does codex install skills from the NETWORK into the isolated home? --------------
+# A and B are both about this machine. C is about a third party.
+#
+# A fresh CODEX_HOME does not stay as it was built. On startup codex fetches OpenAI's
+# curated remote-plugin catalogue and installs from it — measured 2026-09-01, three plugins
+# including deep-research-work, which ships skills/deep-research/SKILL.md. That is the class
+# of thing the claude arm's --disable-slash-commands exists to exclude, arriving over a
+# network, versioned by a server that can change it between two runs of one batch.
+#
+# `--disable remote_plugin` does NOT stop it — measured, all three installed anyway, the
+# same trap as `--sandbox workspace-write` in check B. `--disable plugins` does.
+#
+# THIS CHECK NEEDS NO MODEL ANSWER. The install happens at startup, so it is observable
+# even when the run is refused for quota — verified that way on 2026-09-01. It is the one
+# check here that still works when the account is out of credit.
+
 echo
-echo "ok: BOTH checks hold for $(codex --version 2>/dev/null | head -1)"
+echo "--- check C: network-installed plugins ---"
+
+plugins_after() { # $1 = label, rest = extra flags; prints the plugin dirs left behind
+  local home="$tmp/c-$1"; shift
+  rm -rf "$home"; mkdir -p "$home"
+  cp "$REAL_HOME/auth.json" "$home/auth.json"
+  ( cd "$tmp/work" \
+    && CODEX_HOME="$home" HOME="$tmp/fakehome" codex exec --skip-git-repo-check \
+         --sandbox read-only --color never "$@" "Say the word ready." ) >/dev/null 2>&1
+  find "$home/plugins/cache" -mindepth 2 -maxdepth 2 -type d 2>/dev/null \
+    | while read -r p; do basename "$p"; done | sort | paste -sd, -
+}
+
+echo "positive control — no flag, codex free to install ..."
+c_control="$(plugins_after control)"
+if [[ -z "$c_control" ]]; then
+  echo
+  echo "INCONCLUSIVE: no remote plugins were installed even WITHOUT the flag."
+  echo "Either the catalogue is unreachable from here or this codex version stopped doing"
+  echo "it. Either way a clean result below would mean nothing. Do not read it as a pass."
+  exit 1
+fi
+echo "  installed without the flag: ${c_control} — the test can see the channel"
+
+echo "with --disable plugins, which is what run-agent.sh passes ..."
+c_disabled="$(plugins_after disabled --disable plugins)"
+if [[ -n "$c_disabled" ]]; then
+  echo
+  echo "ISOLATION LEAKS: --disable plugins did not stop the install (${c_disabled})."
+  echo "The codex arm is receiving network-versioned skills the claude arm is denied."
+  exit 2
+fi
+echo "  nothing installed — the network channel is closed for this run"
+
+echo
+echo "ok: ALL THREE checks hold for $(codex --version 2>/dev/null | head -1)"
 echo
 echo "SCOPE, SAID PLAINLY: check B closes DISCOVERABILITY, not reachability. \`~\` no longer"
 echo "resolves into the operator's home; /Users/<op>/... still exists and is still readable"

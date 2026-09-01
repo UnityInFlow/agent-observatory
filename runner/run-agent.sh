@@ -446,8 +446,37 @@ case "$RUNTIME" in
     #
     # NOT --approve-for-me: it adds an automatic reviewer the other arms do not have, which
     # is a behaviour change wearing an isolation flag's clothes.
-    CODEX_ARGS=(--sandbox danger-full-access --color never)
+    CODEX_ARGS=(--sandbox danger-full-access --color never --disable plugins)
     [[ -n "$AGENT_MODEL" ]] && CODEX_ARGS+=(--model "$AGENT_MODEL")
+
+    # --disable plugins IS THE ANALOGUE OF claude's --disable-slash-commands, and it closes
+    # a channel that is worse than the operator's: a NETWORK one, resolved at run time.
+    #
+    # A fresh isolated CODEX_HOME does not stay empty. On startup codex fetches OpenAI's
+    # curated remote-plugin catalogue and installs from it — measured 2026-09-01 on a
+    # throwaway git repo and a one-line prompt, real binary, isolated CODEX_HOME + HOME:
+    #
+    #   (no flag)                  -> deep-research-work 0.1.14, openai-templates 0.1.1,
+    #                                 plugin-management 0.1.0 installed under plugins/cache
+    #   --disable remote_plugin    -> ALL THREE INSTALLED ANYWAY. The obviously-named flag
+    #                                 is not the fix, exactly as --sandbox workspace-write
+    #                                 was not the fix for the HOME leak one commit ago
+    #   --disable plugins          -> plugins/cache empty
+    #
+    # deep-research-work ships `skills/deep-research/SKILL.md`. That is the same class of
+    # thing --disable-slash-commands exists to keep off the claude arm, arriving over the
+    # network, carrying a version number that a server can change between two runs of the
+    # same batch. The seven codex runs in #65 all have those three directories in their
+    # kept CODEX_HOME. Nothing in their record says so.
+    #
+    # WHAT THIS DOES NOT REMOVE, and it is deliberate: codex seeds six skills of its own
+    # into skills/.system (imagegen, openai-docs, plugin-creator, review-agent,
+    # skill-creator, skill-installer) and the agent can see them — asked to list what it
+    # had, it named five of the six. Those ship inside the binary and are pinned by
+    # `codex-cli 0.147.0`, which the record already carries in runtime.version. Stripping
+    # them would make this arm something other than codex-as-shipped, which is what a plain
+    # baseline is supposed to be. They are recorded below instead of removed, so a version
+    # bump that changes the set is visible in the data rather than in someone's memory.
 
     # ISOLATION IS AN ENVIRONMENT, NOT A FLAG, AND THAT WAS MEASURED RATHER THAN READ.
     # `--ignore-user-config` says only "do not load $CODEX_HOME/config.toml". Tested
@@ -559,6 +588,49 @@ esac
 
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
+
+# --- 8b. what the runtime brought with it ----------------------------------
+# THE RECORD DID NOT SAY WHAT THE ARM WAS GIVEN, AND TWICE THAT COST A COMPARISON.
+#
+# Both facts below were computed already and printed to a terminal nobody keeps:
+# whether a cmux shim was stripped off PATH (the 26 invisible hook executions of 08-29)
+# and whether user settings were isolated. A run launched from a wrapping terminal is a
+# different experiment from one launched in a plain shell and the row looked identical.
+# #65 is the same failure with a different subject: the codex arm read 240 lines of the
+# operator's skills while customization.{mcp,skills,instructions}Hash all said null,
+# which reads as "uncustomized" to every consumer downstream.
+#
+# So this records the surface rather than asserting it is clean. It is MEASURED where it
+# can be — the codex inventory is read off the isolated directories after the run, so a
+# future codex version seeding a seventh skill shows up as a changed string in the data
+# instead of as nobody noticing. Where it cannot be measured it stays null, never "".
+#
+# It is EVIDENCE, NOT A CONTROL. Nothing here refuses a run. The controls are the
+# CODEX_HOME/HOME rebuilds and their assertions above; this is what lets a later reader
+# tell two runs apart, which is the thing that was missing.
+AGENT_SURFACE=null
+if [[ "$RUNTIME" == "codex" && -n "${CODEX_HOME_ISOLATED:-}" && -d "${CODEX_HOME_ISOLATED:-}" ]]; then
+  # Sorted, so the string is comparable between runs rather than filesystem-ordered.
+  codex_sys_skills="$(
+    for s in "$CODEX_HOME_ISOLATED"/skills/.system/*; do
+      [[ -d "$s" ]] && basename "$s"
+    done | sort | paste -sd, -
+  )"
+  # Version included: these arrive over the network and are versioned by a server, so
+  # "deep-research-work" and "deep-research-work@0.1.14" are different measurements.
+  codex_plugins="$(
+    for p in "$CODEX_HOME_ISOLATED"/plugins/cache/*/*; do
+      [[ -d "$p" ]] || continue
+      v="$(for d in "$p"/[0-9]*; do [[ -d "$d" ]] && basename "$d"; done | sort -V | tail -1)"
+      printf '%s@%s\n' "$(basename "$p")" "${v:-unknown}"
+    done | sort | paste -sd, -
+  )"
+  AGENT_SURFACE="$(jq -cn \
+    --arg skills "${codex_sys_skills:-}" --arg plugins "${codex_plugins:-}" \
+    '"systemSkills=" + (if $skills == "" then "none" else $skills end) +
+     "; remotePlugins=" + (if $plugins == "" then "none" else $plugins end)')"
+  echo "  codex surface: $(jq -r . <<<"$AGENT_SURFACE")"
+fi
 
 # --- 9. record diff --------------------------------------------------------
 # Everything is staged first and compared against the *baseline commit*, not the working
@@ -763,6 +835,8 @@ RUN_PAYLOAD=$(jq -nc \
   --arg variant "$VARIANT" --arg started "$STARTED_AT" --arg finished "$FINISHED_AT" \
   --arg provider "$PROVIDER" --arg product "$PRODUCT" --arg version "$RUNTIME_VERSION" \
   --arg model "${AGENT_MODEL:-auto}" --arg sha "$BASELINE_SHA" \
+  --argjson isolated "$ISOLATE_USER_SETTINGS" --argjson stripped "$WRAPPER_STRIPPED" \
+  --argjson surface "$AGENT_SURFACE" \
   --argjson customization "$CUSTOMIZATION" \
   --argjson duration "$DURATION_MS" --argjson changed "$CHANGED_FILES" \
   --argjson added "${ADDED:-0}" --argjson deleted "${DELETED:-0}" \
@@ -771,7 +845,8 @@ RUN_PAYLOAD=$(jq -nc \
   '{
     runId:$runId, experimentId:$exp, benchmarkId:$bench, variant:$variant,
     startedAt:$started, finishedAt:$finished,
-    runtime:{provider:$provider, product:$product, version:$version, model:$model},
+    runtime:{provider:$provider, product:$product, version:$version, model:$model,
+             userSettingsIsolated:$isolated, shimsStripped:$stripped, surface:$surface},
     repository:{commitSha:$sha, dirtyBeforeRun:false},
     customization:$customization,
     behavior:$behavior,

@@ -18,6 +18,17 @@ data class RuntimeDto(
     @field:NotBlank val product: String,
     val version: String? = null,
     val model: String? = null,
+    /**
+     * What the arm was actually given — see V6__agent_surface.sql.
+     *
+     * All three default to null and mean "not measured", never "no". A run recorded before
+     * the runner captured these carries nulls; a run that was measured and not isolated
+     * carries `false`. Downstream must not collapse the two, which is the mistake V4 exists
+     * to undo.
+     */
+    val userSettingsIsolated: Boolean? = null,
+    val shimsStripped: Boolean? = null,
+    val surface: String? = null,
 )
 
 data class RepositoryDto(
