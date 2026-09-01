@@ -118,8 +118,13 @@ class ComparisonService(
             // other arm — the same one-directional bias this change exists to remove.
             passRate = if (evaluated.isEmpty()) null else passed.toDouble() / evaluated.size,
             acceptanceRate = if (evaluated.isEmpty()) null else evaluated.map { it.acceptanceRate() }.average(),
-            medianToolCalls = median(measured.map { it.behavior.toolCalls.toDouble() }),
-            medianModelCalls = median(measured.map { it.behavior.modelCalls.toDouble() }),
+            // mapNotNull, exactly as the token medians below already do. A run whose
+            // telemetry was never collected reports null rather than 0 since V4, and
+            // averaging an absent measurement in as a zero is the one-directional bias
+            // the passRate comment above exists to prevent — it would make the arm with
+            // no telemetry look like the most efficient one.
+            medianToolCalls = median(measured.mapNotNull { it.behavior.toolCalls?.toDouble() }),
+            medianModelCalls = median(measured.mapNotNull { it.behavior.modelCalls?.toDouble() }),
             medianTokens = median(measured.mapNotNull { it.efficiency.totalTokens()?.toDouble() }),
             // Reads + creations: the whole cache footprint, which on a Claude run dwarfs
             // input+output by two orders of magnitude.
@@ -134,7 +139,7 @@ class ComparisonService(
                 median(measured.mapNotNull { it.efficiency.cacheCreationTokens?.toDouble() }),
             medianEstimatedCost = median(measured.mapNotNull { it.efficiency.estimatedCost?.toDouble() }),
             medianDurationMs = median(measured.mapNotNull { it.efficiency.durationMs?.toDouble() }),
-            medianRetries = median(measured.map { it.behavior.retries.toDouble() }),
+            medianRetries = median(measured.mapNotNull { it.behavior.retries?.toDouble() }),
             meanUnrelatedFilesChanged =
                 if (evaluated.isEmpty()) null else evaluated.map { it.unrelatedFilesChanged.toDouble() }.average(),
             // §23: a taxonomy is more useful than a generic FAIL counter.
