@@ -672,6 +672,7 @@ INFRA_SIGNATURE="no quota|quota exceeded|rate limit|too many requests|not authen
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|401 unauthorized|api error|connection closed|connection reset"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|502 bad gateway|503 service unavailable|overloaded_error|network error"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|session limit|usage limit|limit reached|insufficient credit"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|went to sleep|request timed out|service unavailable"
 
 AGENT_ABORTED=false
 ABORT_REASON=""
@@ -861,6 +862,28 @@ curl -fsS -X POST "${API}/api/runs" -H 'Content-Type: application/json' \
 
 if [[ -s "$EVALUATION_JSON" ]]; then
   EVAL_PAYLOAD="$(jq -c "$EVALUATION_PAYLOAD_FILTER" "$EVALUATION_JSON")"
+
+  # The partial-run case, which the produced-nothing gate above cannot see. An agent that
+  # explored, wrote one file, and *then* had its connection dropped has produced something,
+  # so that gate skips it and the evaluator reports "acceptance failed" — F03, incorrect
+  # code, for a dropped connection. Observed on BE-003 run 3dd96582.
+  #
+  # Two conditions, and both are needed. Neither alone is safe:
+  #
+  #   the run FAILED — a passing run is never infrastructure, whatever noise its log
+  #   carries. Three passing runs in this project end with an infrastructure line and
+  #   recovered anyway; a tail match alone would have discarded all three.
+  #
+  #   the log ENDS with the signature — a run that hit a dropped connection and recovered
+  #   has output after it, whereas a run killed by one stops there. Matching anywhere in
+  #   the log is what would condemn those three passing runs.
+  if [[ "$AGENT_ABORTED" != true && -f "$AGENT_LOG" && "$RUNTIME" != "manual" ]] \
+     && [[ "$(jq -r '.passed // false' <<<"$EVAL_PAYLOAD")" != "true" ]] \
+     && tail -3 "$AGENT_LOG" | grep -qiE "$INFRA_SIGNATURE"; then
+    AGENT_ABORTED=true
+    ABORT_CLASS="F13"
+    ABORT_REASON="the run failed and its log ends in: $(tail -3 "$AGENT_LOG" | grep -ioE "$INFRA_SIGNATURE" | head -1)"
+  fi
 
   # §23: F13 is "timeout/rate limit", not F03 "incorrect code". Recording the true cause
   # is the whole point of having a taxonomy instead of a FAIL counter.

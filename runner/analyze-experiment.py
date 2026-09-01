@@ -331,12 +331,39 @@ def main(argv=None):
                   f"a failure of its arm.")
     print()
 
+    # ---- §13.1: quality gates decide *before* efficiency is compared -------------------
+    #
+    # "A run that fails a gate is unsuccessful even when it used fewer tokens. Compare
+    # efficiency only among runs that passed." Without this, a cheap failure lowers its
+    # arm's median and reads as an improvement — the arm that gave up fastest wins.
+    #
+    # This gate does NOT relax the completeness check above. Both arms must still reach
+    # the registered number of measuring runs before anything prints; the gate only decides
+    # which of those runs carry an efficiency number. Otherwise the fix would reintroduce
+    # optional stopping through the back door: fail a few runs, gate them out, analyse a
+    # smaller batch.
+    gated = {arm: [(r, ev) for r, ev in arms[arm] if ev.get("passed")] for arm in (c, t)}
+    excluded = {arm: len(arms[arm]) - len(gated[arm]) for arm in (c, t)}
+
+    if excluded[c] or excluded[t]:
+        print(f"  §13.1 efficiency gate: comparing passed runs only — "
+              f"{c} {len(gated[c])}/{len(arms[c])}, {t} {len(gated[t])}/{len(arms[t])}")
+        # Passed-only medians are conditional on passing. When the arms pass at different
+        # rates they are no longer the same population, and the cost contrast answers
+        # "among runs that worked, which was cheaper" rather than "which is cheaper".
+        # That is still the registered question, but it is a narrower one and the reader
+        # has to be told, in the same output as the number.
+        if excluded[c] != excluded[t]:
+            print(f"  ⚠️  the arms were gated unequally, so the comparison below is "
+                  f"conditional on passing;\n      read it with the pass rates, not instead of them")
+        print()
+
     print(f"{'metric':<13}{'n':>5}{c:>13}{t:>13}{'change':>10}{'p':>7}  note")
     print("-" * 82)
     results = {}
     for key in ("cost", "duration", "toolCalls", "cacheTokens", "modelCalls"):
-        a = [m for m in (metrics(r)[key] for r, _ in arms[c]) if m is not None]
-        b = [m for m in (metrics(r)[key] for r, _ in arms[t]) if m is not None]
+        a = [m for m in (metrics(r)[key] for r, _ in gated[c]) if m is not None]
+        b = [m for m in (metrics(r)[key] for r, _ in gated[t]) if m is not None]
         if not a or not b:
             print(f"{key:<13}{0:>5}{'—':>13}{'—':>13}")
             continue
@@ -395,10 +422,26 @@ def main(argv=None):
         return sum(1 for _, ev in arms[arm] if ev.get("failureClass") == "F02")
 
     primary = results.get(PRIMARY)
+    # The MDE table was derived at n=10 per arm. If the §13.1 gate left fewer runs than
+    # that carrying an efficiency number, the registered threshold no longer describes what
+    # this sample can detect, and clearing it would not mean what KEEP claims it means.
+    # Refusing the verdict is the fail-closed reading; quietly applying a 24% bar to n=6 is
+    # the flattering one, and this project has been caught by that shape before.
+    # Compared against the effective registered n, not the module constant: an experiment
+    # that registered a different size passes --expect-n, and hardcoding 10 here would
+    # declare every such batch short and refuse a verdict it was entitled to.
+    short = {arm: len(gated[arm]) for arm in (c, t) if len(gated[arm]) < args.expect_n}
     print()
     print(f"F02 error-contract failures: {c}={f02(c)}  {t}={f02(t)}")
     if f02(t) > f02(c):
         verdict, why = "REJECT", "the treatment increased error-contract failures"
+    elif short:
+        detail = ", ".join(f"{arm} n={n}" for arm, n in short.items())
+        verdict, why = "INCONCLUSIVE", (
+            f"the §13.1 gate left fewer than {args.expect_n} passing runs "
+            f"({detail}); the registered MDE was derived at n={args.expect_n} "
+            f"and does not apply to this sample"
+        )
     elif primary is None or primary["change"] is None:
         verdict, why = "INCONCLUSIVE", f"no usable {PRIMARY} measurement"
     elif primary["change"] <= -MDE[PRIMARY] and primary["p"] is not None and primary["p"] < 0.05:
