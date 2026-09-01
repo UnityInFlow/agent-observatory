@@ -134,11 +134,17 @@ cleanup() {
   if [[ "$KEEP_WORKTREE" == true ]]; then
     echo "  worktree kept at $WORKTREE"
     [[ -d "${WORKTREE}.codex-home" ]] && echo "  isolated codex home kept at ${WORKTREE}.codex-home"
+    [[ -d "${WORKTREE}.home" ]] && echo "  isolated HOME kept at ${WORKTREE}.home"
   else
     rm -rf "$WORKTREE"
     # The isolated codex home lives beside the worktree and holds session state and sqlite
     # files codex writes during the run. It is disposable for the same reason the worktree is.
     rm -rf "${WORKTREE}.codex-home"
+    # The isolated HOME holds a symlink to ~/.m2 and nothing else. `rm -rf` on a directory
+    # removes the LINK, never the 8.5 GB it points at — but the ordering matters, so this
+    # deletes the link explicitly first rather than relying on that being remembered.
+    rm -f "${WORKTREE}.home/.m2"
+    rm -rf "${WORKTREE}.home"
   fi
 }
 trap cleanup EXIT
@@ -480,18 +486,70 @@ case "$RUNTIME" in
       echo "  codex isolated: CODEX_HOME=$CODEX_HOME_ISOLATED (auth.json only)"
     fi
 
+    # HOME REDIRECTION — observatory#65. THIS IS L2 AND SAYING SO IS THE POINT.
+    #
+    # A clean CODEX_HOME stops global instructions AUTO-LOADING. It does nothing about an
+    # agent that goes and READS instructions itself, and on 2026-08-30 every one of the
+    # seven codex runs on record did exactly that: `sed -n '1,240p'
+    # ~/.agents/skills/memtrace-first/SKILL.md` as its first action, before touching the
+    # worktree. A run labelled plain baseline pulled ~240 lines of operator methodology into
+    # context and announced it would follow it.
+    #
+    # MEASURED 2026-09-01, POSITIVE CONTROL FIRST, because a one-sided test passes when the
+    # sandbox is simply broken:
+    #   danger-full-access, real HOME  -> agent read the operator's skills. Probe works.
+    #   workspace-write,    real HOME  -> agent read them ANYWAY. Sandbox mode is not the fix;
+    #                                     workspace-write restricts writes, not reads.
+    #   workspace-write,    HOME here  -> agent found none of them.
+    # Given a discovery prompt with no path in it, the unredirected agent enumerated the
+    # whole of ~/.codex/skills (gsd-undo, gsd-update, gsd-verify-work, ...), so the two
+    # memtrace files in #65 were what one run reached for, not the extent of what is
+    # reachable.
+    #
+    # WHAT THIS DOES AND DOES NOT BUY, stated because this project has mistaken the two
+    # five times now. It makes the operator's files UNDISCOVERABLE: `~` no longer resolves
+    # there. It does NOT make them UNREACHABLE: /Users/<op>/... still exists and is still
+    # readable by an agent that constructs the path another way. This is a control at L2.
+    # Do not let a later reader take it for isolation.
+    #
+    # ~/.m2 IS LINKED AND THAT IS A DELIBERATE HOLE. The task instructs `./mvnw test`;
+    # maven's repository is 8.5 GB on this machine and a bare HOME would re-download it per
+    # run, changing duration by orders of magnitude and failing the build for a reason the
+    # other arms never meet. A dependency cache is a build artefact, not an instruction
+    # channel — but it is a path back into the operator's home and it is named here rather
+    # than hidden. Nothing else is linked.
+    AGENT_HOME_ISOLATED=""
+    if [[ "$ISOLATE_USER_SETTINGS" == true ]]; then
+      AGENT_HOME_ISOLATED="${WORKTREE}.home"
+      rm -rf "$AGENT_HOME_ISOLATED"
+      mkdir -p "$AGENT_HOME_ISOLATED"
+      [[ -d "$HOME/.m2" ]] && ln -s "$HOME/.m2" "$AGENT_HOME_ISOLATED/.m2"
+      # Same regression guard as above, same honest scope: it protects this function against
+      # a later edit that links something carrying instructions. It is not a control over
+      # what the operator has on disk.
+      for forbidden in .agents .codex .claude .config AGENTS.md CLAUDE.md .cursorrules; do
+        [[ -e "$AGENT_HOME_ISOLATED/$forbidden" ]] \
+          && die "isolated HOME contains $forbidden — refusing to record this as an isolated run"
+      done
+      echo "  codex isolated: HOME=$AGENT_HOME_ISOLATED (.m2 symlink only) — L2, see #65"
+    fi
+
     # Exported inside the subshell rather than through an env array: an empty array under
     # `set -u` is an error on bash before 4.4, and this script's shebang does not pin one.
     if [[ "$INTERACTIVE" == true ]]; then
       (
         cd "$WORKTREE" || exit 1
         [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        [[ -n "$AGENT_HOME_ISOLATED" ]] && export HOME="$AGENT_HOME_ISOLATED"
         codex "${CODEX_ARGS[@]}"
       ) || echo "run-agent: codex exited non-zero — recording the run anyway"
     else
       (
         cd "$WORKTREE" || exit 1
         [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        # HOME is exported AFTER CODEX_HOME so the latter keeps pointing at the built
+        # directory rather than re-deriving from the new HOME.
+        [[ -n "$AGENT_HOME_ISOLATED" ]] && export HOME="$AGENT_HOME_ISOLATED"
         codex exec "${CODEX_ARGS[@]}" "$(cat "$BENCH_DIR/task.md")"
       ) 2>&1 | tee "$AGENT_LOG" \
         || echo "run-agent: codex exited non-zero — recording the run anyway"
