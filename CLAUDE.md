@@ -53,9 +53,20 @@ All 17 affected runs are F13/F15 infrastructure failures, already excluded three
 live result depends on them** — this is a class of fabrication to remove, not damage to
 repair.
 
-Related: nothing validates a run record anywhere. Three artifacts describe its shape and only
-`Dtos.kt` executes, checking four strings. `runner/schemas/run.schema.json` is loaded by no
-code at all while looking exactly like enforcement. Issue #53.
+Related: **the runner validates a run record; the database still does not.** Three artifacts
+describe its shape. `runner/schemas/run.schema.json` used to be loaded by no code at all while
+looking exactly like enforcement — and it had drifted three migrations behind the payload, so
+wiring it in as it stood would have rejected every run. `run-agent.sh` now validates against it
+before the POST, via the stdlib-only `runner/validate-run-record.py`.
+
+That is L2 for every record any experiment has produced, because they all come through the
+runner. It is **not** L2 for the database: a direct `POST /api/runs` still bypasses it, and
+`Dtos.kt` remains the only check on that path — four `@NotBlank` strings. Closing it needs the
+check inside the API. Issue #53, steps 2, 3, 4 and 6 still open.
+
+If you add a keyword to `run.schema.json`, expect the validator to refuse it until someone
+implements it. That is deliberate: it implements a subset of draft 2020-12, and a subset that
+silently ignores what it does not understand reports a success it never checked.
 
 ## When changing how a metric is computed
 
