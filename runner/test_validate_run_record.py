@@ -135,6 +135,51 @@ class TheSchemaCannotOutrunTheValidator(unittest.TestCase):
         with self.assertRaises(vr.SchemaUnsupported):
             vr.validate(record(), s)
 
+    def test_a_keyword_on_a_property_the_record_omits_is_still_caught(self):
+        """The hole the first version had, pinned.
+
+        The guard used to run inside the instance walk, so it only ever reached a subschema
+        whose property was PRESENT in the record. `behavior: {}` is what the codex arm sends,
+        so an `enum` on `behavior.modelCalls` was never looked at and the validator reported
+        a success on a schema it had not read. A guard whose coverage depends on the data it
+        happens to see is not a guard."""
+        s = copy.deepcopy(SCHEMA)
+        s["properties"]["behavior"]["properties"]["modelCalls"]["enum"] = [1, 2]
+        r = record(behavior={})
+        with self.assertRaises(vr.SchemaUnsupported):
+            vr.validate(r, s)
+
+    def test_a_keyword_under_an_array_items_subschema_is_caught(self):
+        """Same hole, the other recursion path: `items` is only descended when the array is
+        non-empty, so an empty changedFiles would have hidden it."""
+        s = copy.deepcopy(SCHEMA)
+        s["properties"]["result"]["properties"]["changedFiles"]["items"]["pattern"] = ".*"
+        r = record()
+        r["result"]["changedFiles"] = []
+        with self.assertRaises(vr.SchemaUnsupported):
+            vr.validate(r, s)
+
+    def test_the_schema_is_checked_before_the_record_is_judged(self):
+        """An unsupported schema must not be able to return 'valid' for anything, including
+        a record that is itself wrong. Order matters: check the schema, then the record."""
+        s = copy.deepcopy(SCHEMA)
+        s["properties"]["variant"]["enum"] = ["baseline"]
+        with self.assertRaises(vr.SchemaUnsupported):
+            vr.validate(record(variant=None, behavior={"toolCalls": -1}), s)
+
+    def test_additional_properties_as_a_schema_is_refused_not_ignored(self):
+        """Found by the opencode reviewer's PROBE K.
+
+        `additionalProperties` takes a boolean OR a schema, and only `false` is implemented.
+        The keyword-name guard cannot see that difference, so `{"type": "string"}` passed the
+        guard and was then silently ignored — admitting exactly the properties it was written
+        to constrain. A keyword being implemented is not the same as every form of it being
+        implemented, and the silent skip arrived through the value rather than the key."""
+        s = copy.deepcopy(SCHEMA)
+        s["properties"]["runtime"]["additionalProperties"] = {"type": "string"}
+        with self.assertRaises(vr.SchemaUnsupported):
+            vr.validate(record(), s)
+
     def test_the_shipped_schema_uses_only_implemented_keywords(self):
         """Guards the reverse direction: someone edits run.schema.json, CI stays green
         because no test exercised the new keyword, and the validator quietly stops covering

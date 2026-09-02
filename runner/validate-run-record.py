@@ -32,6 +32,13 @@ that leaves the record honest. `format`, `examples`, `default`, `title`, `descri
 and `$schema` are annotations and are listed as deliberately non-validating — `format` in
 particular is an annotation by default in 2020-12, and treating it as a constraint would be
 this validator inventing a rule the schema does not state.
+
+That guarantee is about keyword NAMES, and stating it without the qualifier was an over-claim
+an adversarial review caught. A name in `ENFORCED` can still carry a value form nothing here
+handles: `additionalProperties` takes a boolean or a schema, only `false` is implemented, and
+`{"type": "string"}` sailed through the name check and was then ignored — admitting the very
+properties it was written to constrain. `check_schema` now refuses that too. The lesson
+generalises to any keyword added later: implementing a name is not implementing the keyword.
 """
 
 import argparse
@@ -77,12 +84,21 @@ def _matches_type(value, name):
     return isinstance(value, JSON_TYPES[name])
 
 
-def validate(instance, schema, path="$", errors=None):
-    """Collect every violation rather than raising on the first, so one run of the
-    validator names everything wrong with a record instead of one thing at a time."""
-    if errors is None:
-        errors = []
+def check_schema(schema, path="$"):
+    """Walk the whole schema and refuse any keyword this validator does not implement.
 
+    THIS RUNS OVER THE SCHEMA, NOT OVER A RECORD, AND THAT IS THE ENTIRE POINT.
+
+    The first version of this check sat inside `validate()` and fired as it recursed. That
+    only ever reached a subschema whose property was PRESENT in the instance being checked,
+    so it inspected whatever the record happened to contain and silently skipped the rest.
+    `behavior: {}` is exactly what the codex arm sends, so an `enum` added to
+    `behavior.modelCalls` was never looked at — the guard reported success on a schema it
+    had not read.
+
+    A guard whose coverage depends on the data it happens to see is not a guard. This walks
+    every subschema unconditionally, before any record is considered.
+    """
     unknown = set(schema) - ENFORCED - ANNOTATIONS
     if unknown:
         raise SchemaUnsupported(
@@ -90,6 +106,34 @@ def validate(instance, schema, path="$", errors=None):
             f"{sorted(unknown)}. Implement them in validate-run-record.py — do not "
             f"remove them from the schema to make this pass."
         )
+
+    # A KEYWORD BEING IMPLEMENTED IS NOT THE SAME AS EVERY FORM OF IT BEING IMPLEMENTED.
+    #
+    # `additionalProperties` takes a boolean OR a schema. Only `false` is implemented here,
+    # and the name-level check above cannot see the difference — so `{"type": "string"}`
+    # would pass the guard and then be silently ignored by the walk below, admitting exactly
+    # the extra properties it was written to constrain. That is the silent skip this file
+    # exists to make impossible, arriving through the value instead of the key.
+    ap = schema.get("additionalProperties")
+    if "additionalProperties" in schema and not isinstance(ap, bool):
+        raise SchemaUnsupported(
+            f"{path}: additionalProperties is a schema ({ap!r}); only true/false is "
+            f"implemented. Implement subschema handling in validate-run-record.py."
+        )
+
+    for key, subschema in schema.get("properties", {}).items():
+        check_schema(subschema, f"{path}.{key}")
+    if "items" in schema:
+        check_schema(schema["items"], f"{path}[]")
+
+
+def validate(instance, schema, path="$", errors=None):
+    """Collect every violation rather than raising on the first, so one run of the
+    validator names everything wrong with a record instead of one thing at a time."""
+    top = errors is None
+    if top:
+        errors = []
+        check_schema(schema)
 
     if "type" in schema:
         names = schema["type"]
