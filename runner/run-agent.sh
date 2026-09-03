@@ -857,6 +857,20 @@ RUN_PAYLOAD=$(jq -nc \
     telemetryQueryKey:("{ resource.observatory.run.id = \"" + $runId + "\" }")
   }')
 
+# THE SCHEMA EXECUTES, OR THE RUN DOES NOT PERSIST (#53).
+#
+# `run.schema.json` described this payload for months and was loaded by nothing, so it drifted
+# three migrations behind it — V6's userSettingsIsolated/shimsStripped/surface and V5's
+# reportedTotalTokens were all absent while `additionalProperties` was false. Wiring the file
+# in as it stood would have rejected every run. That is what an unexecuted description is
+# worth, and why this line exists rather than a note asking someone to keep the file current.
+#
+# It is L2 for records that come through this runner, which is every record any experiment has
+# produced. It is NOT L2 for the database: a direct POST to /api/runs still bypasses it, and
+# closing that needs the check inside the API (#53 step 5, the other half).
+python3 "$HERE/validate-run-record.py" --schema "$HERE/schemas/run.schema.json" \
+  <<<"$RUN_PAYLOAD" || die "run record does not match run.schema.json; not persisting it"
+
 curl -fsS -X POST "${API}/api/runs" -H 'Content-Type: application/json' \
   -d "$RUN_PAYLOAD" >/dev/null || die "failed to persist the run"
 
