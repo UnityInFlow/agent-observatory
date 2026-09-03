@@ -63,6 +63,25 @@ This cuts both ways:
   unless the change argues for it explicitly.
 - **The analysis is chosen before the data exists.**
 
+## Working constraints — read this before you plan a review
+
+**You cannot write files, and you cannot write outside this repository.** Attempting to build
+a scratch git repository under `/tmp` to test a behaviour empirically will be auto-rejected as
+an external-directory write, and the rejection has twice ended a review mid-sentence — leaving
+no verdict, which is recorded as *no review having happened at all*.
+
+So do not plan to verify by experiment. Review by reading: the code, its tests, and `git show`
+/ `git diff` / `git log` on this repository, which are read-only and permitted.
+
+When you would otherwise have run a probe, **write the probe out instead** — the exact commands
+and the exact output you expect — and state plainly that you reasoned it rather than ran it.
+A clearly-labelled analytical finding is worth far more than a blocked run, and an
+over-confident finding you could not execute is worth less than nothing.
+
+**Emit the verdict line even if you run out of room.** A review that stops before its verdict
+is discarded entirely, so if you are uncertain, say what you checked, say what you could not,
+and still end with the line.
+
 ## Output
 
 Markdown. One section per file. Under each, either `no finding` or numbered findings, each
