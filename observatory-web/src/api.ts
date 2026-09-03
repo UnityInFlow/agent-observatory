@@ -9,12 +9,15 @@ export interface Runtime {
 }
 
 export interface Behavior {
-  modelCalls: number;
-  toolCalls: number;
-  toolFailures: number;
-  retries: number;
-  permissionRequests: number;
-  permissionDenials: number;
+  // Nullable since API V4: null is "telemetry was never collected", 0 is "measured as
+  // zero". The codex arm has no telemetry path, so it reports null throughout — rendering
+  // that as 0 made an unmeasured arm look like the most efficient one.
+  modelCalls: number | null;
+  toolCalls: number | null;
+  toolFailures: number | null;
+  retries: number | null;
+  permissionRequests: number | null;
+  permissionDenials: number | null;
 }
 
 export interface Efficiency {

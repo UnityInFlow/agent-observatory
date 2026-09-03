@@ -63,12 +63,12 @@ export default function RunDetailPage() {
         <div className="card">
           <h3>Behaviour</h3>
           <dl className="kv">
-            <Row label="Model calls">{run.behavior.modelCalls}</Row>
-            <Row label="Tool calls">{run.behavior.toolCalls}</Row>
-            <Row label="Tool failures">{run.behavior.toolFailures}</Row>
-            <Row label="Retries">{run.behavior.retries}</Row>
-            <Row label="Permission requests">{run.behavior.permissionRequests}</Row>
-            <Row label="Permission denials">{run.behavior.permissionDenials}</Row>
+            <Row label="Model calls">{run.behavior.modelCalls ?? '—'}</Row>
+            <Row label="Tool calls">{run.behavior.toolCalls ?? '—'}</Row>
+            <Row label="Tool failures">{run.behavior.toolFailures ?? '—'}</Row>
+            <Row label="Retries">{run.behavior.retries ?? '—'}</Row>
+            <Row label="Permission requests">{run.behavior.permissionRequests ?? '—'}</Row>
+            <Row label="Permission denials">{run.behavior.permissionDenials ?? '—'}</Row>
           </dl>
         </div>
 
@@ -124,7 +124,7 @@ export default function RunDetailPage() {
             <Row label="Secret exposure">
               {evaluation == null ? '—' : evaluation.secretExposureDetected ? 'DETECTED' : 'none'}
             </Row>
-            <Row label="Permission denials">{run.behavior.permissionDenials}</Row>
+            <Row label="Permission denials">{run.behavior.permissionDenials ?? '—'}</Row>
           </dl>
         </div>
       </div>
