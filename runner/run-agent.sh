@@ -66,6 +66,48 @@ done
 die() { echo "run-agent: $*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
+# --- 3b. remove terminal wrappers from PATH --------------------------------
+# THE AGENT MUST BE THE AGENT, NOT THE AGENT PLUS WHATEVER LAUNCHED THIS SCRIPT.
+#
+# Some terminal hosts install shims ahead of the real CLI on PATH. cmux does: it puts
+# $TMPDIR/cmux-cli-shims/<id>/{claude,codex} first, and each shim execs a wrapper that
+# APPENDS ARGUMENTS THIS SCRIPT NEVER PASSED --
+#
+#   cmux-claude-wrapper:  exec "$REAL_CLAUDE" --session-id <id> --settings "$HOOKS_JSON" "$@"
+#   cmux-codex-wrapper:   injects --dangerously-bypass-hook-trust and -c hooks.X=...
+#
+# Measured 2026-08-29 on run 092a384a, launched from inside such a terminal: 12 hooks with
+# `hook_source: flagSettings` registered and executed, including three on Stop. All 172
+# runs recorded before it — launched elsewhere — have zero. Nothing in the run record
+# distinguishes the two: `customization.hooksHash` hashes the repository's files, and these
+# arrive on the command line. The wrapper's hooks act on PreToolUse and PermissionRequest,
+# which is exactly where agent behaviour is decided.
+#
+# So a run launched from that terminal is a different experiment from one launched in a
+# plain shell, and the record cannot tell them apart. That is the harness measuring itself
+# again, and it is the reason this strips rather than trusts.
+#
+# Belt and braces, because either alone is one assumption:
+#   PATH        drop every cmux-cli-shims entry, so the real binary is resolved
+#   env         set the wrappers' own documented off switches, in case a shim is reached
+#               by a path this does not recognise
+# The list is intentionally specific. A generic "strip anything odd" would silently change
+# which binary runs, which is the failure this is preventing.
+PATH_BEFORE_SHIM_STRIP="$PATH"
+CLEAN_PATH=""
+while IFS= read -r entry; do
+  case "$entry" in
+    */cmux-cli-shims|*/cmux-cli-shims/*) continue ;;
+  esac
+  CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$entry"
+done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+if [[ "$CLEAN_PATH" != "$PATH_BEFORE_SHIM_STRIP" ]]; then
+  export PATH="$CLEAN_PATH"
+  echo "  stripped terminal CLI shims from PATH — the agent runs the real binary"
+fi
+export CMUX_CLAUDE_HOOKS_DISABLED=1 CMUX_CODEX_HOOKS_DISABLED=1
+WRAPPER_STRIPPED=$([[ "$CLEAN_PATH" != "$PATH_BEFORE_SHIM_STRIP" ]] && echo true || echo false)
+
 # shellcheck source=lib/evaluation-payload.sh
 source "$HERE/lib/evaluation-payload.sh"
 
@@ -91,8 +133,18 @@ WORKTREE="${TMPDIR:-/tmp}/observatory-run-${RUN_ID}"
 cleanup() {
   if [[ "$KEEP_WORKTREE" == true ]]; then
     echo "  worktree kept at $WORKTREE"
+    [[ -d "${WORKTREE}.codex-home" ]] && echo "  isolated codex home kept at ${WORKTREE}.codex-home"
+    [[ -d "${WORKTREE}.home" ]] && echo "  isolated HOME kept at ${WORKTREE}.home"
   else
     rm -rf "$WORKTREE"
+    # The isolated codex home lives beside the worktree and holds session state and sqlite
+    # files codex writes during the run. It is disposable for the same reason the worktree is.
+    rm -rf "${WORKTREE}.codex-home"
+    # The isolated HOME holds a symlink to ~/.m2 and nothing else. `rm -rf` on a directory
+    # removes the LINK, never the 8.5 GB it points at — but the ordering matters, so this
+    # deletes the link explicitly first rather than relying on that being remembered.
+    rm -f "${WORKTREE}.home/.m2"
+    rm -rf "${WORKTREE}.home"
   fi
 }
 trap cleanup EXIT
@@ -150,6 +202,10 @@ echo "=============================================================="
 echo " run        ${RUN_ID}"
 echo " benchmark  ${BENCHMARK_ID}   variant ${VARIANT}   experiment ${EXPERIMENT}"
 echo " runtime    ${RUNTIME}"
+echo " binary     $(command -v "$RUNTIME" 2>/dev/null || echo n/a)"
+echo " shims      $([[ "$WRAPPER_STRIPPED" == true ]] \
+                    && echo "stripped from PATH (a terminal wrapper was in front of the real CLI)" \
+                    || echo "none found on PATH")"
 echo " worktree   ${WORKTREE}"
 echo " baseline   ${BASELINE_SHA:0:12}"
 echo "=============================================================="
@@ -172,6 +228,24 @@ if [[ "$RUNTIME" != "manual" ]]; then
     || die "could not determine the version of '$RUNTIME'"
 fi
 RUNTIME_VERSION="${RUNTIME_VERSION:-unknown}"
+
+# --- the run record must not claim a model the runtime was never told ------
+# `runtime.model` is written from $AGENT_MODEL, which is what the CALLER asked for. Until
+# 2026-08-28 the codex arm accepted --model and never forwarded it, so a run invoked with
+# MODEL=x recorded model:x while codex used whatever ~/.codex/config.toml selected. That is
+# not a missing control — it is a provenance field that is wrong in the direction that looks
+# correct, on the experiment's own independent variable.
+#
+# This is the L2 half: something executes and refuses. Every non-manual arm forwards --model
+# today; if one ever stops, this fails the run instead of recording the claim.
+case "$RUNTIME" in
+  copilot|claude|codex) MODEL_FORWARDED=true ;;
+  *)                    MODEL_FORWARDED=false ;;
+esac
+if [[ -n "$AGENT_MODEL" && "$MODEL_FORWARDED" != true ]]; then
+  die "--model '$AGENT_MODEL' is not forwarded to runtime '$RUNTIME'.
+    Recording it would put a model in runtime.model that never ran."
+fi
 
 # --- 5. install and hash the customization (§12) ----------------------------
 # The commit the *evaluation* measures against — always a setup commit, never the raw
@@ -352,11 +426,161 @@ case "$RUNTIME" in
     fi
     ;;
   codex)
+    # PARITY WITH THE OTHER TWO ARMS, and every flag below has an analogue there. Until
+    # 2026-08-28 this arm was `codex exec "$(cat task.md)"` and nothing else: no model, no
+    # sandbox policy, no isolation. It had never run, so nothing on record is affected —
+    # which is exactly why it had to change before the first codex run rather than after.
+    #
+    #   --sandbox danger-full-access   the analogue of copilot's --allow-all-paths and of
+    #                                  claude running unsandboxed under acceptEdits. NOT a
+    #                                  convenience: the task instructs the agent to run
+    #                                  ./mvnw test, and Maven writes to ~/.m2 and fetches
+    #                                  over the network. Under workspace-write this arm
+    #                                  would fail the build for a reason the other two never
+    #                                  meet, and the evaluator would record it as incorrect
+    #                                  code. Approval policy is already `never` in exec
+    #                                  mode, so no approval flag is needed to keep it
+    #                                  headless.
+    #   --color never                  copilot's --no-color
+    #   --model                        pinned, as on both other arms
+    #
+    # NOT --approve-for-me: it adds an automatic reviewer the other arms do not have, which
+    # is a behaviour change wearing an isolation flag's clothes.
+    CODEX_ARGS=(--sandbox danger-full-access --color never --disable plugins)
+    [[ -n "$AGENT_MODEL" ]] && CODEX_ARGS+=(--model "$AGENT_MODEL")
+
+    # --disable plugins IS THE ANALOGUE OF claude's --disable-slash-commands, and it closes
+    # a channel that is worse than the operator's: a NETWORK one, resolved at run time.
+    #
+    # A fresh isolated CODEX_HOME does not stay empty. On startup codex fetches OpenAI's
+    # curated remote-plugin catalogue and installs from it — measured 2026-09-01 on a
+    # throwaway git repo and a one-line prompt, real binary, isolated CODEX_HOME + HOME:
+    #
+    #   (no flag)                  -> deep-research-work 0.1.14, openai-templates 0.1.1,
+    #                                 plugin-management 0.1.0 installed under plugins/cache
+    #   --disable remote_plugin    -> ALL THREE INSTALLED ANYWAY. The obviously-named flag
+    #                                 is not the fix, exactly as --sandbox workspace-write
+    #                                 was not the fix for the HOME leak one commit ago
+    #   --disable plugins          -> plugins/cache empty
+    #
+    # deep-research-work ships `skills/deep-research/SKILL.md`. That is the same class of
+    # thing --disable-slash-commands exists to keep off the claude arm, arriving over the
+    # network, carrying a version number that a server can change between two runs of the
+    # same batch. The seven codex runs in #65 all have those three directories in their
+    # kept CODEX_HOME. Nothing in their record says so.
+    #
+    # WHAT THIS DOES NOT REMOVE, and it is deliberate: codex seeds six skills of its own
+    # into skills/.system (imagegen, openai-docs, plugin-creator, review-agent,
+    # skill-creator, skill-installer) and the agent can see them — asked to list what it
+    # had, it named five of the six. Those ship inside the binary and are pinned by
+    # `codex-cli 0.147.0`, which the record already carries in runtime.version. Stripping
+    # them would make this arm something other than codex-as-shipped, which is what a plain
+    # baseline is supposed to be. They are recorded below instead of removed, so a version
+    # bump that changes the set is visible in the data rather than in someone's memory.
+
+    # ISOLATION IS AN ENVIRONMENT, NOT A FLAG, AND THAT WAS MEASURED RATHER THAN READ.
+    # `--ignore-user-config` says only "do not load $CODEX_HOME/config.toml". Tested
+    # 2026-08-28 with a marker instruction in $CODEX_HOME/AGENTS.md: with the flag, the
+    # model still emitted the marker. Global instructions survive it. With CODEX_HOME
+    # pointed at a directory holding auth.json alone, the marker was gone.
+    #
+    # That matters here because ~/.codex on this operator's machine carries AGENTS.md
+    # (importing a 32-line shell-routing instruction file), 3 MCP servers — one of them a
+    # code-search tool — 71 skills, 66 agents, 2 hooks and a plugin. A "plain baseline" run
+    # would carry a global instruction file, which is B3's treatment sitting inside B2's
+    # control.
+    #
+    # This is L2, not L1: nothing stops someone writing an AGENTS.md into this directory
+    # after it is built. What makes it a control is that the runner rebuilds it per run and
+    # asserts its contents below.
+    CODEX_HOME_ISOLATED=""
+    if [[ "$ISOLATE_USER_SETTINGS" == true ]]; then
+      CODEX_HOME_ISOLATED="${WORKTREE}.codex-home"
+      rm -rf "$CODEX_HOME_ISOLATED"
+      mkdir -p "$CODEX_HOME_ISOLATED"
+      if [[ -r "${CODEX_HOME:-$HOME/.codex}/auth.json" ]]; then
+        cp "${CODEX_HOME:-$HOME/.codex}/auth.json" "$CODEX_HOME_ISOLATED/auth.json"
+      else
+        die "codex isolation needs auth.json from ${CODEX_HOME:-$HOME/.codex}; not found"
+      fi
+      # A REGRESSION GUARD ON THIS FUNCTION, not a control over the operator's machine —
+      # said plainly because this project has repeatedly mistaken one for the other. The
+      # directory was created three lines up, so today the loop cannot fire. It fires when
+      # someone later adds a second `cp` here, which is the realistic way this isolation
+      # gets undone.
+      for forbidden in AGENTS.md config.toml instructions.md; do
+        [[ -e "$CODEX_HOME_ISOLATED/$forbidden" ]] \
+          && die "isolated CODEX_HOME contains $forbidden — refusing to record this as an isolated run"
+      done
+      echo "  codex isolated: CODEX_HOME=$CODEX_HOME_ISOLATED (auth.json only)"
+    fi
+
+    # HOME REDIRECTION — observatory#65. THIS IS L2 AND SAYING SO IS THE POINT.
+    #
+    # A clean CODEX_HOME stops global instructions AUTO-LOADING. It does nothing about an
+    # agent that goes and READS instructions itself, and on 2026-08-30 every one of the
+    # seven codex runs on record did exactly that: `sed -n '1,240p'
+    # ~/.agents/skills/memtrace-first/SKILL.md` as its first action, before touching the
+    # worktree. A run labelled plain baseline pulled ~240 lines of operator methodology into
+    # context and announced it would follow it.
+    #
+    # MEASURED 2026-09-01, POSITIVE CONTROL FIRST, because a one-sided test passes when the
+    # sandbox is simply broken:
+    #   danger-full-access, real HOME  -> agent read the operator's skills. Probe works.
+    #   workspace-write,    real HOME  -> agent read them ANYWAY. Sandbox mode is not the fix;
+    #                                     workspace-write restricts writes, not reads.
+    #   workspace-write,    HOME here  -> agent found none of them.
+    # Given a discovery prompt with no path in it, the unredirected agent enumerated the
+    # whole of ~/.codex/skills (gsd-undo, gsd-update, gsd-verify-work, ...), so the two
+    # memtrace files in #65 were what one run reached for, not the extent of what is
+    # reachable.
+    #
+    # WHAT THIS DOES AND DOES NOT BUY, stated because this project has mistaken the two
+    # five times now. It makes the operator's files UNDISCOVERABLE: `~` no longer resolves
+    # there. It does NOT make them UNREACHABLE: /Users/<op>/... still exists and is still
+    # readable by an agent that constructs the path another way. This is a control at L2.
+    # Do not let a later reader take it for isolation.
+    #
+    # ~/.m2 IS LINKED AND THAT IS A DELIBERATE HOLE. The task instructs `./mvnw test`;
+    # maven's repository is 8.5 GB on this machine and a bare HOME would re-download it per
+    # run, changing duration by orders of magnitude and failing the build for a reason the
+    # other arms never meet. A dependency cache is a build artefact, not an instruction
+    # channel — but it is a path back into the operator's home and it is named here rather
+    # than hidden. Nothing else is linked.
+    AGENT_HOME_ISOLATED=""
+    if [[ "$ISOLATE_USER_SETTINGS" == true ]]; then
+      AGENT_HOME_ISOLATED="${WORKTREE}.home"
+      rm -rf "$AGENT_HOME_ISOLATED"
+      mkdir -p "$AGENT_HOME_ISOLATED"
+      [[ -d "$HOME/.m2" ]] && ln -s "$HOME/.m2" "$AGENT_HOME_ISOLATED/.m2"
+      # Same regression guard as above, same honest scope: it protects this function against
+      # a later edit that links something carrying instructions. It is not a control over
+      # what the operator has on disk.
+      for forbidden in .agents .codex .claude .config AGENTS.md CLAUDE.md .cursorrules; do
+        [[ -e "$AGENT_HOME_ISOLATED/$forbidden" ]] \
+          && die "isolated HOME contains $forbidden — refusing to record this as an isolated run"
+      done
+      echo "  codex isolated: HOME=$AGENT_HOME_ISOLATED (.m2 symlink only) — L2, see #65"
+    fi
+
+    # Exported inside the subshell rather than through an env array: an empty array under
+    # `set -u` is an error on bash before 4.4, and this script's shebang does not pin one.
     if [[ "$INTERACTIVE" == true ]]; then
-      ( cd "$WORKTREE" && codex ) || echo "run-agent: codex exited non-zero — recording the run anyway"
+      (
+        cd "$WORKTREE" || exit 1
+        [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        [[ -n "$AGENT_HOME_ISOLATED" ]] && export HOME="$AGENT_HOME_ISOLATED"
+        codex "${CODEX_ARGS[@]}"
+      ) || echo "run-agent: codex exited non-zero — recording the run anyway"
     else
-      ( cd "$WORKTREE" && codex exec "$(cat "$BENCH_DIR/task.md")" ) \
-        2>&1 | tee "$AGENT_LOG" \
+      (
+        cd "$WORKTREE" || exit 1
+        [[ -n "$CODEX_HOME_ISOLATED" ]] && export CODEX_HOME="$CODEX_HOME_ISOLATED"
+        # HOME is exported AFTER CODEX_HOME so the latter keeps pointing at the built
+        # directory rather than re-deriving from the new HOME.
+        [[ -n "$AGENT_HOME_ISOLATED" ]] && export HOME="$AGENT_HOME_ISOLATED"
+        codex exec "${CODEX_ARGS[@]}" "$(cat "$BENCH_DIR/task.md")"
+      ) 2>&1 | tee "$AGENT_LOG" \
         || echo "run-agent: codex exited non-zero — recording the run anyway"
     fi
     ;;
@@ -364,6 +588,49 @@ esac
 
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
+
+# --- 8b. what the runtime brought with it ----------------------------------
+# THE RECORD DID NOT SAY WHAT THE ARM WAS GIVEN, AND TWICE THAT COST A COMPARISON.
+#
+# Both facts below were computed already and printed to a terminal nobody keeps:
+# whether a cmux shim was stripped off PATH (the 26 invisible hook executions of 08-29)
+# and whether user settings were isolated. A run launched from a wrapping terminal is a
+# different experiment from one launched in a plain shell and the row looked identical.
+# #65 is the same failure with a different subject: the codex arm read 240 lines of the
+# operator's skills while customization.{mcp,skills,instructions}Hash all said null,
+# which reads as "uncustomized" to every consumer downstream.
+#
+# So this records the surface rather than asserting it is clean. It is MEASURED where it
+# can be — the codex inventory is read off the isolated directories after the run, so a
+# future codex version seeding a seventh skill shows up as a changed string in the data
+# instead of as nobody noticing. Where it cannot be measured it stays null, never "".
+#
+# It is EVIDENCE, NOT A CONTROL. Nothing here refuses a run. The controls are the
+# CODEX_HOME/HOME rebuilds and their assertions above; this is what lets a later reader
+# tell two runs apart, which is the thing that was missing.
+AGENT_SURFACE=null
+if [[ "$RUNTIME" == "codex" && -n "${CODEX_HOME_ISOLATED:-}" && -d "${CODEX_HOME_ISOLATED:-}" ]]; then
+  # Sorted, so the string is comparable between runs rather than filesystem-ordered.
+  codex_sys_skills="$(
+    for s in "$CODEX_HOME_ISOLATED"/skills/.system/*; do
+      [[ -d "$s" ]] && basename "$s"
+    done | sort | paste -sd, -
+  )"
+  # Version included: these arrive over the network and are versioned by a server, so
+  # "deep-research-work" and "deep-research-work@0.1.14" are different measurements.
+  codex_plugins="$(
+    for p in "$CODEX_HOME_ISOLATED"/plugins/cache/*/*; do
+      [[ -d "$p" ]] || continue
+      v="$(for d in "$p"/[0-9]*; do [[ -d "$d" ]] && basename "$d"; done | sort -V | tail -1)"
+      printf '%s@%s\n' "$(basename "$p")" "${v:-unknown}"
+    done | sort | paste -sd, -
+  )"
+  AGENT_SURFACE="$(jq -cn \
+    --arg skills "${codex_sys_skills:-}" --arg plugins "${codex_plugins:-}" \
+    '"systemSkills=" + (if $skills == "" then "none" else $skills end) +
+     "; remotePlugins=" + (if $plugins == "" then "none" else $plugins end)')"
+  echo "  codex surface: $(jq -r . <<<"$AGENT_SURFACE")"
+fi
 
 # --- 9. record diff --------------------------------------------------------
 # Everything is staged first and compared against the *baseline commit*, not the working
@@ -405,6 +672,7 @@ INFRA_SIGNATURE="no quota|quota exceeded|rate limit|too many requests|not authen
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|401 unauthorized|api error|connection closed|connection reset"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|502 bad gateway|503 service unavailable|overloaded_error|network error"
 INFRA_SIGNATURE="${INFRA_SIGNATURE}|session limit|usage limit|limit reached|insufficient credit"
+INFRA_SIGNATURE="${INFRA_SIGNATURE}|went to sleep|request timed out|service unavailable"
 
 AGENT_ABORTED=false
 ABORT_REASON=""
@@ -426,6 +694,33 @@ fi
 BEHAVIOR='{}'
 EFFICIENCY_EXTRA='{}'
 TRACE_ID=""
+
+# CODEX REPORTS ONE NUMBER, AND IT WAS BEING THROWN AWAY.
+# `codex exec` has no OTel path (ADR-001, #10), so this arm records null tokens and null
+# cost — while printing its own total on the last line of the log:
+#
+#     tokens used
+#     32 386
+#
+# That is not telemetry parity and it is not pretending to be: no input/output split, no
+# cache figures, no cost. It is the one number the runtime states, and recording it beats
+# recording nothing while the arm sits next to one reporting 8876 output tokens and $0.185.
+#
+# It lands in `reportedTotalTokens`, its own field (V5), NOT in outputTokens. Putting a
+# total where a component belongs is the V4 mistake wearing a different name — a field that
+# means one thing carrying a value that means another, in the direction that looks like data.
+if [[ "$RUNTIME" == "codex" && -f "$AGENT_LOG" ]]; then
+  # The count follows the label on the next line, and codex writes thousands separated by a
+  # space ("32 386"), so the digits are joined rather than read as the first group.
+  codex_tokens="$(awk '/^tokens used$/ { getline; gsub(/[^0-9]/, "", $0); if ($0 != "") print $0; exit }' "$AGENT_LOG")"
+  if [[ -n "$codex_tokens" ]]; then
+    EFFICIENCY_EXTRA="$(jq -cn --argjson t "$codex_tokens" '{reportedTotalTokens: $t}')"
+    echo "    codex reported ${codex_tokens} tokens (total only — no split, no cost)"
+  else
+    echo "    codex reported no token total in its log" >&2
+  fi
+fi
+
 if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
   echo
   if [[ "$RUNTIME" == "copilot" ]]; then
@@ -541,6 +836,8 @@ RUN_PAYLOAD=$(jq -nc \
   --arg variant "$VARIANT" --arg started "$STARTED_AT" --arg finished "$FINISHED_AT" \
   --arg provider "$PROVIDER" --arg product "$PRODUCT" --arg version "$RUNTIME_VERSION" \
   --arg model "${AGENT_MODEL:-auto}" --arg sha "$BASELINE_SHA" \
+  --argjson isolated "$ISOLATE_USER_SETTINGS" --argjson stripped "$WRAPPER_STRIPPED" \
+  --argjson surface "$AGENT_SURFACE" \
   --argjson customization "$CUSTOMIZATION" \
   --argjson duration "$DURATION_MS" --argjson changed "$CHANGED_FILES" \
   --argjson added "${ADDED:-0}" --argjson deleted "${DELETED:-0}" \
@@ -549,7 +846,8 @@ RUN_PAYLOAD=$(jq -nc \
   '{
     runId:$runId, experimentId:$exp, benchmarkId:$bench, variant:$variant,
     startedAt:$started, finishedAt:$finished,
-    runtime:{provider:$provider, product:$product, version:$version, model:$model},
+    runtime:{provider:$provider, product:$product, version:$version, model:$model,
+             userSettingsIsolated:$isolated, shimsStripped:$stripped, surface:$surface},
     repository:{commitSha:$sha, dirtyBeforeRun:false},
     customization:$customization,
     behavior:$behavior,
@@ -559,11 +857,47 @@ RUN_PAYLOAD=$(jq -nc \
     telemetryQueryKey:("{ resource.observatory.run.id = \"" + $runId + "\" }")
   }')
 
+# THE SCHEMA EXECUTES, OR THE RUN DOES NOT PERSIST (#53).
+#
+# `run.schema.json` described this payload for months and was loaded by nothing, so it drifted
+# three migrations behind it — V6's userSettingsIsolated/shimsStripped/surface and V5's
+# reportedTotalTokens were all absent while `additionalProperties` was false. Wiring the file
+# in as it stood would have rejected every run. That is what an unexecuted description is
+# worth, and why this line exists rather than a note asking someone to keep the file current.
+#
+# It is L2 for records that come through this runner, which is every record any experiment has
+# produced. It is NOT L2 for the database: a direct POST to /api/runs still bypasses it, and
+# closing that needs the check inside the API (#53 step 5, the other half).
+python3 "$HERE/validate-run-record.py" --schema "$HERE/schemas/run.schema.json" \
+  <<<"$RUN_PAYLOAD" || die "run record does not match run.schema.json; not persisting it"
+
 curl -fsS -X POST "${API}/api/runs" -H 'Content-Type: application/json' \
   -d "$RUN_PAYLOAD" >/dev/null || die "failed to persist the run"
 
 if [[ -s "$EVALUATION_JSON" ]]; then
   EVAL_PAYLOAD="$(jq -c "$EVALUATION_PAYLOAD_FILTER" "$EVALUATION_JSON")"
+
+  # The partial-run case, which the produced-nothing gate above cannot see. An agent that
+  # explored, wrote one file, and *then* had its connection dropped has produced something,
+  # so that gate skips it and the evaluator reports "acceptance failed" — F03, incorrect
+  # code, for a dropped connection. Observed on BE-003 run 3dd96582.
+  #
+  # Two conditions, and both are needed. Neither alone is safe:
+  #
+  #   the run FAILED — a passing run is never infrastructure, whatever noise its log
+  #   carries. Three passing runs in this project end with an infrastructure line and
+  #   recovered anyway; a tail match alone would have discarded all three.
+  #
+  #   the log ENDS with the signature — a run that hit a dropped connection and recovered
+  #   has output after it, whereas a run killed by one stops there. Matching anywhere in
+  #   the log is what would condemn those three passing runs.
+  if [[ "$AGENT_ABORTED" != true && -f "$AGENT_LOG" && "$RUNTIME" != "manual" ]] \
+     && [[ "$(jq -r '.passed // false' <<<"$EVAL_PAYLOAD")" != "true" ]] \
+     && tail -3 "$AGENT_LOG" | grep -qiE "$INFRA_SIGNATURE"; then
+    AGENT_ABORTED=true
+    ABORT_CLASS="F13"
+    ABORT_REASON="the run failed and its log ends in: $(tail -3 "$AGENT_LOG" | grep -ioE "$INFRA_SIGNATURE" | head -1)"
+  fi
 
   # §23: F13 is "timeout/rate limit", not F03 "incorrect code". Recording the true cause
   # is the whole point of having a taxonomy instead of a FAIL counter.

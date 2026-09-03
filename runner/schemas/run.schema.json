@@ -33,7 +33,10 @@
         "provider": { "type": "string", "examples": ["github", "anthropic", "openai"] },
         "product": { "type": "string", "examples": ["copilot-cli", "claude-code", "codex"] },
         "version": { "type": ["string", "null"], "description": "Record the real version, never a placeholder." },
-        "model": { "type": ["string", "null"], "description": "Record the real model." }
+        "model": { "type": ["string", "null"], "description": "Record the real model." },
+        "userSettingsIsolated": { "type": ["boolean", "null"], "description": "V6. Whether the run dropped the operator's user settings. Null where it could not be determined, never false-by-default." },
+        "shimsStripped": { "type": ["boolean", "null"], "description": "V6. Whether a terminal host's CLI shims were removed from PATH. A run launched from a wrapping terminal is a different experiment." },
+        "surface": { "type": ["string", "null"], "description": "V6. Measured inventory of what the runtime brought with it, e.g. 'systemSkills=a,b; remotePlugins=x@1.2'. Evidence, not a control. Null where it cannot be measured, never the empty string." }
       }
     },
 
@@ -83,7 +86,8 @@
         "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
         "cachedTokens": { "type": ["integer", "null"], "minimum": 0 },
         "cacheCreationTokens": { "type": ["integer", "null"], "minimum": 0 },
-        "estimatedCost": { "type": ["number", "null"], "minimum": 0 }
+        "estimatedCost": { "type": ["number", "null"], "minimum": 0 },
+        "reportedTotalTokens": { "type": ["integer", "null"], "minimum": 0, "description": "V5. A total stated by a runtime that gives no input/output split. Never folded into outputTokens: a total in a component's field is the V4 mistake under another name." }
       }
     },
 

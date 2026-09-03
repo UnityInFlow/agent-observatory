@@ -228,6 +228,141 @@ class ObservatoryFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `an unmeasured behaviour counter is null, and a measured zero is still zero`() {
+        registerBenchmark("BE-FLOW-NULLBEHAVIOR")
+
+        // An arm with no telemetry path — the codex arm posts exactly this. Before V4 the
+        // record answered "0 model calls, 0 tool calls" for a run that changed two files
+        // and added 64 lines, which is not a noisy measurement but a false one.
+        val unmeasured = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-NULLBEHAVIOR",
+                  "benchmarkId": "BE-FLOW-NULLBEHAVIOR",
+                  "variant": "baseline",
+                  "runtime": { "provider": "openai", "product": "codex", "version": "0.147.0", "model": "gpt-x" },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 93000 },
+                  "result": { "changedFiles": ["a/Shipment.kt"], "addedLines": 64, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+        val unmeasuredId = JsonPath.read<String>(unmeasured, "$.runId")
+
+        mockMvc.perform(get("/api/runs/$unmeasuredId"))
+            .andExpect(jsonPath("$.behavior.modelCalls").doesNotExist())
+            .andExpect(jsonPath("$.behavior.toolCalls").doesNotExist())
+            .andExpect(jsonPath("$.behavior.permissionDenials").doesNotExist())
+            // The same record already reported null for absent efficiency fields. The point
+            // of V4 is that both halves now agree.
+            .andExpect(jsonPath("$.efficiency.inputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.durationMs").value(93000))
+
+        // And the other half of the distinction: a real zero must survive as a zero, or the
+        // fix has replaced one lie with another.
+        val measuredZero = createRun(
+            "BE-FLOW-NULLBEHAVIOR", "EXP-NULLBEHAVIOR", "baseline",
+            toolCalls = 0, durationMs = 1000,
+        )
+        mockMvc.perform(get("/api/runs/$measuredZero"))
+            .andExpect(jsonPath("$.behavior.toolCalls").value(0))
+            .andExpect(jsonPath("$.behavior.modelCalls").value(6))
+    }
+
+    @Test
+    fun `an unrecorded arm surface is null, and a measured un-isolated run is false`() {
+        registerBenchmark("BE-FLOW-SURFACE")
+
+        // What #65 cost: the codex arm read 240 lines of the operator's skills and the
+        // record said nothing, because there was nowhere for it to say anything. This is
+        // the row that arm posts now — measured, and the plugins carry the version a
+        // server chose at run time, so two runs a week apart are distinguishable.
+        val measured = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-SURFACE",
+                  "benchmarkId": "BE-FLOW-SURFACE",
+                  "variant": "baseline",
+                  "runtime": {
+                    "provider": "openai", "product": "codex", "version": "0.147.0",
+                    "model": "gpt-x",
+                    "userSettingsIsolated": true, "shimsStripped": false,
+                    "surface": "systemSkills=imagegen,openai-docs; remotePlugins=none"
+                  },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 1000 },
+                  "result": { "changedFiles": ["a/Shipment.kt"], "addedLines": 1, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+
+        mockMvc.perform(get("/api/runs/${JsonPath.read<String>(measured, "$.runId")}"))
+            .andExpect(jsonPath("$.runtime.userSettingsIsolated").value(true))
+            // false is a MEASUREMENT: the runner looked for a terminal shim and found none.
+            // It must survive as false and never be flattened into the null below.
+            .andExpect(jsonPath("$.runtime.shimsStripped").value(false))
+            .andExpect(jsonPath("$.runtime.surface").value("systemSkills=imagegen,openai-docs; remotePlugins=none"))
+
+        // The 172 runs recorded before any of this was captured. Null means nobody looked.
+        // Defaulting these to false would say the harness checked and the run was not
+        // isolated — a claim about runs where no such check existed, which is V4's mistake
+        // with a different column name.
+        val legacy = createRun("BE-FLOW-SURFACE", "EXP-SURFACE", "baseline", toolCalls = 3, durationMs = 1000)
+        mockMvc.perform(get("/api/runs/$legacy"))
+            .andExpect(jsonPath("$.runtime.userSettingsIsolated").doesNotExist())
+            .andExpect(jsonPath("$.runtime.shimsStripped").doesNotExist())
+            .andExpect(jsonPath("$.runtime.surface").doesNotExist())
+    }
+
+    @Test
+    fun `a runtime that reports only a total gets its own field, and a breakdown still wins`() {
+        registerBenchmark("BE-FLOW-TOTALTOKENS")
+
+        // Codex prints one `tokens used` line and nothing else — no split, no cost. Before
+        // V5 there was nowhere to put it, so the arm recorded null tokens beside an arm
+        // reporting 8876 output tokens. The total must NOT land in outputTokens.
+        val codexish = mockMvc.perform(
+            post("/api/runs").contentType(MediaType.APPLICATION_JSON).content(
+                """
+                {
+                  "experimentId": "EXP-TOTALTOKENS",
+                  "benchmarkId": "BE-FLOW-TOTALTOKENS",
+                  "variant": "baseline",
+                  "runtime": { "provider": "openai", "product": "codex", "version": "0.147.0", "model": "gpt-x" },
+                  "repository": { "commitSha": "abc123", "dirtyBeforeRun": false },
+                  "behavior": {},
+                  "efficiency": { "durationMs": 93000, "reportedTotalTokens": 32386 },
+                  "result": { "changedFiles": ["a.kt"], "addedLines": 64, "deletedLines": 0 }
+                }
+                """.trimIndent(),
+            ),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+
+        mockMvc.perform(get("/api/runs/${JsonPath.read<String>(codexish, "$.runId")}"))
+            .andExpect(jsonPath("$.efficiency.reportedTotalTokens").value(32386))
+            // The split stays absent rather than being invented from the total.
+            .andExpect(jsonPath("$.efficiency.inputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.outputTokens").doesNotExist())
+            .andExpect(jsonPath("$.efficiency.estimatedCost").doesNotExist())
+
+        // And the precedence: a runtime that reports a breakdown has said something more
+        // precise than a total, so the breakdown wins and the field stays null.
+        val withSplit = createRun(
+            "BE-FLOW-TOTALTOKENS", "EXP-TOTALTOKENS", "baseline",
+            toolCalls = 5, durationMs = 1000,
+        )
+        mockMvc.perform(get("/api/runs/$withSplit"))
+            .andExpect(jsonPath("$.efficiency.inputTokens").value(20000))
+            .andExpect(jsonPath("$.efficiency.reportedTotalTokens").doesNotExist())
+    }
+
+    @Test
     fun `discards a run invalidated by the harness, including its evaluation`() {
         registerBenchmark("BE-FLOW-7")
         val keep = createRun("BE-FLOW-7", "EXP-DELETE", "baseline", toolCalls = 13, durationMs = 40_000)
