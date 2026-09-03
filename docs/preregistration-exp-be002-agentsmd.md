@@ -834,3 +834,61 @@ it would have been the cheapest run in its arm.
 The runner now records F15 when telemetry reports zero model calls **and** zero tool calls,
 whatever the diff shows. Cost and tool calls are the registered outcomes; a run with no
 measurement of them has nothing to contribute regardless of how good its code is.
+
+---
+
+## Amendment 3 — 2026-08-10, before BE-003 has collected a single run
+
+**Efficiency is now compared among passing runs only.** This implements §13.1 of
+`BACKEND-AI-AGENT-BUSINESS-REQUIREMENTS`, which the analyser had never enforced:
+
+> A run that fails a gate is unsuccessful even when it used fewer tokens. Compare
+> efficiency only among runs that passed.
+
+### Why now, and why this is not choosing the answer
+
+Until today the analyser computed cost medians across every measuring run, passed or not.
+On BE-001 and BE-002 that was harmless because it never came up — every arm this project
+has ever completed passed 100%. **BE-003 is the first benchmark built to be failable**, with
+two independent traps, so the case stops being hypothetical the moment it collects data.
+
+The change is a **proven no-op on every existing result**. Re-run after the change:
+
+| experiment | cost change before | after |
+|---|---|---|
+| `EXP-BE002-CLAUDEMD-V2` | +39.0% | **+39.0%** |
+| `EXP-BE002-NOHOOKS` | +38.1% | **+38.1%** |
+
+Identical, verdicts identical, because both arms of both experiments passed every run. A
+rule change that cannot move any number already published is one that can be made without
+choosing an answer — and it is registered here *before* the experiment where it will bite.
+
+### What it does not do
+
+**It does not relax the dataset gate.** Both arms must still reach the registered number of
+*measuring* runs before anything prints. The efficiency gate only decides which of those
+runs carry a number. Without that separation the fix would reintroduce optional stopping
+through the back door: fail a few runs, gate them out, analyse a smaller batch.
+
+### Two consequences, both registered rather than discovered later
+
+**1. Passed-only medians are conditional.** When the arms are gated unequally they are no
+longer the same population, and the cost contrast answers *"among runs that worked, which
+was cheaper"* rather than *"which is cheaper"*. That is still the registered question, but
+narrower, and the analyser now prints the warning in the same output as the number so a
+table cannot be copied into a write-up without it.
+
+**2. A gated arm below the registered n gets no verdict.** The MDE table was derived at
+n=10. If the gate leaves fewer passing runs than that, the registered threshold no longer
+describes what the sample can detect, and `KEEP` would claim something the data cannot
+support. The analyser returns `INCONCLUSIVE` with the reason instead.
+
+`REJECT` still outranks that guard: an increase in F02 is a statement about correctness, not
+efficiency, and must not be able to hide behind an arm having been gated short by those same
+failures. Tested explicitly.
+
+### Scope
+
+This amendment binds every experiment analysed by `runner/analyze-experiment.py`. Nothing
+above changes — not the 24% cost bar, not the p < .05 requirement, not the F02 rule, and not
+the conclusions of `EXP-BE002-CLAUDEMD-V2` or `EXP-BE002-NOHOOKS`.

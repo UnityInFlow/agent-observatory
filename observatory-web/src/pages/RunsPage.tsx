@@ -148,7 +148,7 @@ export default function RunsPage() {
                 </td>
                 <td className="num">{fmtDuration(run.efficiency.durationMs)}</td>
                 <td className="num">{fmtTokens(totalTokens(run.efficiency))}</td>
-                <td className="num">{run.behavior.toolCalls}</td>
+                <td className="num">{run.behavior.toolCalls ?? '—'}</td>
                 <td className="num">{fmtPercent(run.evaluation?.acceptanceRate ?? null)}</td>
               </tr>
             ))}

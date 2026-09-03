@@ -38,11 +38,13 @@ class ObservatoryMetrics(private val registry: MeterRegistry) {
         registry.counter(
             "observatory.tool.failures",
             Tags.of("runtime", run.runtime.provider, "variant", run.variant),
-        ).increment(run.behavior.toolFailures.toDouble())
+        ).increment((run.behavior.toolFailures ?: 0).toDouble())
 
         summary("observatory.run.duration", tags).record((run.efficiency.durationMs ?: 0L).toDouble())
-        summary("observatory.run.tool_calls", tags).record(run.behavior.toolCalls.toDouble())
-        summary("observatory.run.model_calls", tags).record(run.behavior.modelCalls.toDouble())
+        // Not measured means no sample, not a zero sample. Recording 0 for a run whose
+        // telemetry was never collected drags the arm's median down and reads as efficiency.
+        run.behavior.toolCalls?.let { summary("observatory.run.tool_calls", tags).record(it.toDouble()) }
+        run.behavior.modelCalls?.let { summary("observatory.run.model_calls", tags).record(it.toDouble()) }
         run.efficiency.totalTokens()?.let { summary("observatory.run.tokens", tags).record(it.toDouble()) }
         summary("observatory.run.acceptance_rate", tags).record(evaluation.acceptanceRate())
     }

@@ -173,7 +173,7 @@ demo: ## Seed a baseline-vs-instructions experiment (10 runs) so Compare is mean
 	@API=$(API_URL) WEB=$(WEB_URL) $(RUNNER)/seed-demo.sh
 
 .PHONY: run-benchmark
-run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUSTOMIZATION=)
+run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUSTOMIZATION= KEEP=1)
 	@API=$(API_URL) WEB=$(WEB_URL) TEMPO_URL=$(TEMPO_URL) \
 	  OTLP_HTTP_ENDPOINT=http://localhost:$(OTLP_HTTP_PORT) \
 	  OTLP_GRPC_ENDPOINT=http://localhost:$(OTLP_GRPC_PORT) \
@@ -185,14 +185,42 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 	    $${MODEL:+--model $$MODEL} \
 	    $${CUSTOMIZATION:+--customization $$CUSTOMIZATION} \
 	    $${ISOLATE_USER_SETTINGS:+--isolate-user-settings} \
+	    $${KEEP:+--keep} \
 	    $${INTERACTIVE:+--interactive}
 
+.PHONY: baseline-report
+baseline-report: ## Single-arm baseline: median and range, never a mean (EXPERIMENT=)
+	@$(RUNNER)/baseline-report.py $${EXPERIMENT:?set EXPERIMENT=} --api $(API_URL)
+
 .PHONY: baseline-runs
-baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL=)
-	@n=$${N:-5}; for i in $$(seq 1 $$n); do \
+baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL= KEEP=1)
+# THE SAMPLE SIZE IS ASSERTED, NOT ASSUMED. `|| true` in the loop is right — one dead run
+# should not abandon a batch — but until 2026-08-28 nothing counted what survived, so a
+# batch of five where three died printed five banners and exited 0. A baseline reported at
+# n=5 that is really n=2 is not noisy; it is a different measurement.
+#
+# What is counted is RECORDED RUNS, not invocation exit codes. run-agent.sh exits with the
+# evaluator's code, so an agent that legitimately fails the benchmark exits non-zero and is
+# still a valid observation. Counting exits would discard exactly the runs B2 exists to see.
+	@exp="$${EXPERIMENT:-EXP-001}"; n=$${N:-5}; \
+	before=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
+	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
+	echo "==> $$exp held $$before run(s) before this batch"; \
+	for i in $$(seq 1 $$n); do \
 	  echo ""; echo "================ baseline run $$i / $$n ================"; \
 	  $(MAKE) --no-print-directory run-benchmark || true; \
-	done
+	done; \
+	after=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
+	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
+	added=$$((after - before)); \
+	echo ""; echo "==> $$added of $$n runs reached the observatory"; \
+	if [ "$$added" -ne "$$n" ]; then \
+	  echo ""; \
+	  echo "INCOMPLETE BATCH: asked for $$n, recorded $$added."; \
+	  echo "The missing runs never produced a record, so they are absent rather than failed."; \
+	  echo "Do not report this baseline at n=$$n. Re-run the shortfall or record the real n."; \
+	  exit 1; \
+	fi
 	@echo ""; echo "==> variance across the baseline"
 	@curl -fsS "$(API_URL)/api/experiments/$${EXPERIMENT:-EXP-001}/comparison" | jq '.'
 
