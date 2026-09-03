@@ -41,6 +41,25 @@ exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$STUB/opencode"
 
+# A transparent `git` shim. With STUB_EMPTY_DIFF=1 a *content* diff — the one the prompt is
+# built from — comes back empty while `--name-only` still lists the files, which is exactly
+# the shape `rtk git diff` produced on 2026-09-03: files matched, diff filtered away, no
+# error. Without this the BLOCKED path could be deleted and every other case would still pass.
+REAL_GIT="$(command -v git)"
+cat > "$STUB/git" <<STUB
+#!/usr/bin/env bash
+if [ "\${STUB_EMPTY_DIFF:-0}" = "1" ]; then
+  saw_diff=0; saw_name_only=0
+  for a in "\$@"; do
+    [ "\$a" = diff ] && saw_diff=1
+    [ "\$a" = --name-only ] && saw_name_only=1
+  done
+  [ "\$saw_diff" = 1 ] && [ "\$saw_name_only" = 0 ] && exit 0
+fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$STUB/git"
+
 git -C "$FIXTURE" init -q
 git -C "$FIXTURE" config user.email t@t
 git -C "$FIXTURE" config user.name t
@@ -95,11 +114,41 @@ else
   printf 'FAIL  %-46s argv was: %s\n' "reviewer argv" "$(cat "$CALLS" 2>/dev/null)"; FAIL=$((FAIL+1))
 fi
 
+# --- the diff must be IN the prompt, not a command the reviewer is asked to run
+#
+# It was a command until 2026-09-03, when the identical line in the benchmarks repo produced
+# a review that looped for ten minutes and died with no verdict: opencode rewrites its bash
+# through rtk, `rtk git diff` filters `.claude/` and `.github/` paths out of its output, and
+# a hooks-only branch therefore reported no changes at all. Asserting the diff CONTENT rather
+# than the file name is the point — a prompt naming the files while carrying none of their
+# text is exactly the state that looped.
+if grep -q 'BEGIN DIFF' "$CALLS" 2>/dev/null; then
+  printf 'ok    %-46s the diff is inlined, not fetched\n' "reviewer prompt"; PASS=$((PASS+1))
+else
+  printf 'FAIL  %-46s prompt carried no diff text\n' "reviewer prompt"; FAIL=$((FAIL+1))
+fi
+
 # --- a migration is in scope; migrations are one-way
 echo 'ALTER TABLE agent_run ADD COLUMN x int;' \
   > "$FIXTURE/observatory-api/src/main/resources/db/migration/V7__x.sql"
 git -C "$FIXTURE" add -A >/dev/null; git -C "$FIXTURE" commit -qm migration
 run "a migration is reviewed"           "$PUSH" 0 1
+
+# --- matched files, but a diff that came back empty: a harness fault, not a clean branch
+#
+# The reviewer must NOT be called here. Spending a model call on an empty subject is what
+# looped for ten minutes, and reporting the empty result as a review would be the
+# silent-success failure this hook exists to prevent.
+run "an empty diff blocks, without a call" "$PUSH" 0 0 STUB_EMPTY_DIFF=1
+
+: > "$CALLS"
+out="$(printf '%s' "$PUSH" | env STUB_EMPTY_DIFF=1 CALLS="$CALLS" PATH="$STUB:$PATH" \
+    bash "$FIXTURE/.claude/hooks/opencode-review.sh" 2>&1)"
+if printf '%s' "$out" | grep -q 'BLOCKED' && printf '%s' "$out" | grep -q 'harness fault'; then
+  printf 'ok    %-46s named as a harness fault, not a clean branch\n' "empty diff message"; PASS=$((PASS+1))
+else
+  printf 'FAIL  %-46s out was: %s\n' "empty diff message" "$out"; FAIL=$((FAIL+1))
+fi
 
 # --- the disable switch
 run "OBS_REVIEW_HOOK=0 disables it"     "$PUSH" 0 0 OBS_REVIEW_HOOK=0

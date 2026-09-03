@@ -78,6 +78,14 @@ and the exact output you expect — and state plainly that you reasoned it rathe
 A clearly-labelled analytical finding is worth far more than a blocked run, and an
 over-confident finding you could not execute is worth less than nothing.
 
+**The diff is handed to you in the prompt. Do not go looking for it.** Your shell filters
+dotfile paths — `.claude/`, `.opencode/`, `.github/` — out of git's output, so
+`git diff <base> -- .` comes back **empty** on exactly the branches you are most often asked
+to review. It does not error. An earlier review in a sibling repository read that emptiness as
+*"nothing changed"*, re-ran the same command for ten minutes, and was killed without ever
+writing a verdict. If the diff you were given looks incomplete, **say so in the review** — do
+not try to fetch a better one.
+
 **Emit the verdict line even if you run out of room.** A review that stops before its verdict
 is discarded entirely, so if you are uncertain, say what you checked, say what you could not,
 and still end with the line.
