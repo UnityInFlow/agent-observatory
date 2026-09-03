@@ -18,6 +18,17 @@ data class RuntimeDto(
     @field:NotBlank val product: String,
     val version: String? = null,
     val model: String? = null,
+    /**
+     * What the arm was actually given — see V6__agent_surface.sql.
+     *
+     * All three default to null and mean "not measured", never "no". A run recorded before
+     * the runner captured these carries nulls; a run that was measured and not isolated
+     * carries `false`. Downstream must not collapse the two, which is the mistake V4 exists
+     * to undo.
+     */
+    val userSettingsIsolated: Boolean? = null,
+    val shimsStripped: Boolean? = null,
+    val surface: String? = null,
 )
 
 data class RepositoryDto(
@@ -38,13 +49,21 @@ data class CustomizationDto(
         listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash).all { it == null }
 }
 
+/**
+ * Nullable, matching [EfficiencyDto] rather than contradicting it inside the same record.
+ *
+ * A 0 default made a collector gap indistinguishable from a genuine zero, and every reader
+ * had to know that — `analyze-experiment.py` carried a `has_behavior_telemetry()` heuristic
+ * to undo it while the API, the web UI and Prometheus all read the zeros literally. `null`
+ * is "not measured"; `0` is "measured as zero".
+ */
 data class BehaviorDto(
-    val modelCalls: Int = 0,
-    val toolCalls: Int = 0,
-    val toolFailures: Int = 0,
-    val retries: Int = 0,
-    val permissionRequests: Int = 0,
-    val permissionDenials: Int = 0,
+    val modelCalls: Int? = null,
+    val toolCalls: Int? = null,
+    val toolFailures: Int? = null,
+    val retries: Int? = null,
+    val permissionRequests: Int? = null,
+    val permissionDenials: Int? = null,
 )
 
 data class EfficiencyDto(
@@ -55,6 +74,12 @@ data class EfficiencyDto(
     val cachedTokens: Long? = null,
     /** Cache creations — separate from reads because they are priced differently. */
     val cacheCreationTokens: Long? = null,
+    /**
+     * A total reported directly by a runtime that gives no input/output split — `codex exec`
+     * prints one `tokens used` line and nothing else. Null wherever a breakdown exists,
+     * because there input + output already IS the total. See V5.
+     */
+    val reportedTotalTokens: Long? = null,
     val estimatedCost: BigDecimal? = null,
 )
 

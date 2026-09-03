@@ -4,7 +4,58 @@ Handoff note. Read this first when picking the work back up.
 
 ---
 
-## RESUME HERE — 2026-08-10 (end of day)
+## RESUME HERE — 2026-09-02
+
+**This repository is not the state document any more.** The experiment record lives in the lab:
+[`agent-learning-lab/HANDOFF.md`](https://github.com/UnityInFlow/agent-learning-lab/blob/main/HANDOFF.md),
+starting at *"What the eighth session changed, 2026-09-01"*. Read that first. This file now
+covers only what changed **in the instrument**.
+
+The spine is at **position 4 of 28** (B2 — plain baseline). B1 closed 2026-08-30. B2 has run
+and been scored; its gate is not closed. Nothing is green-and-unmerged in either repo:
+`agent-observatory` main is `13419ef`, `agent-learning-lab` main is `66dd630`.
+
+### What changed in the instrument since 2026-08-10
+
+The 08-10 block below predates all of it — it was written before B2, before issue #65, and
+before PR #66.
+
+| change | where |
+|---|---|
+| **Per-run `HOME`** and `--disable plugins` on the codex arm — the two arms were not the same experiment, and the record could not say so | `#66` → `b39b85e` |
+| **cmux shims stripped from `PATH`** — a terminal host was putting `$TMPDIR/cmux-cli-shims/<id>/{claude,codex}` ahead of the real CLI, injecting session ids, settings and `--dangerously-bypass-hook-trust` | `runner/run-agent.sh` §PATH |
+| **V4 — behaviour counters are nullable.** `model_calls`, `tool_calls`, `tool_failures` drop `NOT NULL`, so a telemetry gap stops being indistinguishable from a genuine measured zero | `V4__behavior_not_measured.sql` |
+| **V5 — `reported_total_tokens`** for runtimes that give no input/output split; null when the runtime reports a breakdown | `V5__reported_total_tokens.sql` |
+| **V6 — the surface record.** `user_settings_isolated`, `shims_stripped`, `agent_surface` — a run now states the surface it ran on rather than leaving it to be inferred | `V6__agent_surface.sql` |
+| **§13.1 in the analyzer** — compare efficiency only among runs that passed, so a run that failed a quality gate cannot lower its arm's cost median | `#50` → `13419ef`, `runner/analyze-experiment.py:334` |
+
+**V4 is why an arm with no telemetry now reads as unmeasured** rather than as the most
+efficient arm in the comparison. That is the correction that made `codex n=5` legible in B2's
+baseline report.
+
+### Closed since
+
+- **obs#51** — *render unreported behaviour counters as unknown, not zero* — closed 2026-09-02
+  **as superseded by #66, not merged.** It inferred absence from `modelCalls == 0 && toolCalls
+  == 0`, and V4 made the columns nullable, so that heuristic would now blank a genuine measured
+  zero.
+- **obs#52** — *BehaviorDto fabricates zeros* — closed 2026-09-02. It is what V4 did.
+
+### What this repo still owes
+
+`obs#53` — record load alongside each run. The duration tail on both arms is contaminated by
+something the run record does not capture, and the record cannot separate a contaminated run
+from a clean one. See HANDOFF, *"The sleep explains one run, and not the arm it was used to
+void."*
+
+---
+
+# History
+
+Everything below is kept as the record and is **no longer current**. It describes the
+instrument as it stood on 2026-08-10.
+
+## RESUME HERE — 2026-08-10 (end of day) — historical
 
 **`EXP-BE002-CLAUDEMD-V2` produced this project's first non-void result.** Full write-up in
 [`preregistration-exp-be002-agentsmd.md`](preregistration-exp-be002-agentsmd.md), "Result —
@@ -303,7 +354,13 @@ different runs; treat it as suggestive, not as a measured effect.
 
 No PRs open.
 
-## Uncommitted, in the working tree
+## Uncommitted, in the working tree — historical, this tree no longer exists
+
+> **Historical.** This section described a working tree as of 2026-08-10; that tree no longer
+> exists and everything listed has since been committed and merged. Of the two items under
+> "Not done", the nullable `BehaviorDto` counters landed as **V4**; the recorded UAT of the
+> five questions was not checked when this notice was written. Kept for the record; do not
+> act on the table as a to-do list.
 
 Not yet committed or PR'd — do this before anything else:
 
