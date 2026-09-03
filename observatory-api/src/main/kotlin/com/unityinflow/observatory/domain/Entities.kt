@@ -6,6 +6,7 @@ import jakarta.persistence.Embedded
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.Transient
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
@@ -97,27 +98,50 @@ class AgentRuntime(
     var version: String? = null,
 
     var model: String? = null,
+
+    // Nullable for the same reason the six behaviour counters are — V6__agent_surface.sql.
+    // Null is "nobody measured this run", which is the truth for all 172 runs recorded
+    // before 2026-09-01. A Boolean here would make them all look deliberately un-isolated.
+    @Column(name = "user_settings_isolated")
+    var userSettingsIsolated: Boolean? = null,
+
+    @Column(name = "shims_stripped")
+    var shimsStripped: Boolean? = null,
+
+    @Column(name = "agent_surface")
+    var surface: String? = null,
 )
 
+/**
+ * Nullable on purpose, all six of them — see V4__behavior_not_measured.sql.
+ *
+ * These were `Int = 0`, so a run whose telemetry was never collected was stored as a run
+ * that made zero model calls. The codex arm has no telemetry path at all, so every codex
+ * run recorded a complete-looking set of zeros while the same row reported `null` for the
+ * equivalent missing efficiency fields.
+ *
+ * `null` means not measured. `0` means measured as zero. They are different claims and only
+ * one of them is evidence.
+ */
 @Embeddable
 class BehaviorMetrics(
-    @Column(name = "model_calls", nullable = false)
-    var modelCalls: Int = 0,
+    @Column(name = "model_calls")
+    var modelCalls: Int? = null,
 
-    @Column(name = "tool_calls", nullable = false)
-    var toolCalls: Int = 0,
+    @Column(name = "tool_calls")
+    var toolCalls: Int? = null,
 
-    @Column(name = "tool_failures", nullable = false)
-    var toolFailures: Int = 0,
+    @Column(name = "tool_failures")
+    var toolFailures: Int? = null,
 
-    @Column(nullable = false)
-    var retries: Int = 0,
+    @Column
+    var retries: Int? = null,
 
-    @Column(name = "permission_requests", nullable = false)
-    var permissionRequests: Int = 0,
+    @Column(name = "permission_requests")
+    var permissionRequests: Int? = null,
 
-    @Column(name = "permission_denials", nullable = false)
-    var permissionDenials: Int = 0,
+    @Column(name = "permission_denials")
+    var permissionDenials: Int? = null,
 )
 
 @Embeddable
@@ -143,12 +167,26 @@ class EfficiencyMetrics(
     @Column(name = "cache_creation_tokens")
     var cacheCreationTokens: Long? = null,
 
+    /**
+     * A total the runtime reported directly, for runtimes that give no split — see
+     * V5__reported_total_tokens.sql. Codex prints one `tokens used` line and nothing else.
+     *
+     * Null wherever a real breakdown exists, because there input + output already IS the
+     * total and a second copy could disagree with it.
+     */
+    @Column(name = "reported_total_tokens")
+    var reportedTotalTokens: Long? = null,
+
     @Column(name = "estimated_cost")
     var estimatedCost: BigDecimal? = null,
 ) {
     /** Null when the runtime exposes no token information at all, rather than 0. */
+    /**
+     * The breakdown wins when it exists. A runtime that reports input and output has said
+     * something more precise than a total, and preferring the total there would discard it.
+     */
     fun totalTokens(): Long? =
-        if (inputTokens == null && outputTokens == null) null
+        if (inputTokens == null && outputTokens == null) reportedTotalTokens
         else (inputTokens ?: 0L) + (outputTokens ?: 0L)
 }
 
@@ -199,7 +237,16 @@ class AgentRun(
     var customizationId: UUID? = null,
 
     @Embedded
-    var behavior: BehaviorMetrics = BehaviorMetrics(),
+    /**
+     * Backing field only — read [behavior] instead.
+     *
+     * Since V4 every column in [BehaviorMetrics] is nullable, and JPA materializes an
+     * embeddable whose columns are all null as a null embeddable. That is correct and it is
+     * also a footgun, so the null is absorbed here rather than at each of the eight call
+     * sites: "no telemetry" is already expressible as six null counters.
+     */
+    @Suppress("VariableNaming")
+    var behaviorOrNull: BehaviorMetrics? = BehaviorMetrics(),
 
     @Embedded
     var efficiency: EfficiencyMetrics = EfficiencyMetrics(),
@@ -212,7 +259,17 @@ class AgentRun(
 
     @Column(name = "telemetry_query_key")
     var telemetryQueryKey: String? = null,
-)
+) {
+    /**
+     * Behaviour counters, never null as an object — the six counters inside it carry the
+     * "not measured" answer individually. Assigning null here means the same thing as
+     * assigning six nulls, so both spellings land on the same state.
+     */
+    @get:Transient
+    var behavior: BehaviorMetrics
+        get() = behaviorOrNull ?: BehaviorMetrics()
+        set(value) { behaviorOrNull = value }
+}
 
 @Entity
 @Table(name = "evaluation")

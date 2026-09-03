@@ -372,3 +372,88 @@ class NoVerdictMode(unittest.TestCase):
     def test_verdict_is_emitted_by_default(self):
         code, out = self.invoke(self.complete(), "--expect-n", "2")
         self.assertIn("VERDICT", out)
+
+
+class EfficiencyGate(unittest.TestCase):
+    """§13.1 — a run that failed a quality gate must not lower its arm's cost median.
+
+    Without this the arm that gives up fastest wins: once a cheap failure and a cheap
+    success are in the same median, the analysis cannot tell them apart, and "used fewer
+    tokens" starts meaning "produced less".
+    """
+
+    def invoke(self, runs, *argv):
+        original = ae.fetch
+        ae.fetch = lambda url: runs
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = ae.main(["EXP-TEST", *argv])
+            return code, buf.getvalue()
+        finally:
+            ae.fetch = original
+
+    def arms(self, control_costs, treatment_costs, treatment_failed=0, failure="F03"):
+        runs = [run("baseline", cost=c) for c in control_costs]
+        for i, c in enumerate(treatment_costs):
+            failed = i < treatment_failed
+            runs.append(run("instructions", cost=c, passed=not failed,
+                            failure=failure if failed else None))
+        for r in runs:
+            r["experimentKey"] = "EXP-TEST"
+        return runs
+
+    def cost_row(self, out):
+        return next(l for l in out.splitlines() if l.startswith("cost"))
+
+    def test_cheap_failures_do_not_become_the_treatment_median(self):
+        # Ungated, the treatment median is 0.01 — three cheap failures outvote two real
+        # runs and the arm reads as a 95% improvement. Gated, it is the median of what
+        # actually worked: 0.30, a regression.
+        out = self.invoke(
+            self.arms([0.20] * 5, [0.01, 0.01, 0.01, 0.30, 0.30], treatment_failed=3),
+            "--expect-n", "5")[1]
+        row = self.cost_row(out)
+        self.assertIn("0.3", row)
+        self.assertIn("+50", row)          # worse, not better
+        self.assertNotIn("-9", row)        # not the -95% the ungated median would give
+
+    def test_the_gate_is_silent_when_every_run_passed(self):
+        out = self.invoke(self.arms([0.2] * 5, [0.2] * 5), "--expect-n", "5")[1]
+        self.assertNotIn("§13.1 efficiency gate", out)
+
+    def test_the_gate_reports_what_it_excluded(self):
+        out = self.invoke(self.arms([0.2] * 5, [0.2] * 5, treatment_failed=2),
+                          "--expect-n", "5")[1]
+        self.assertIn("§13.1 efficiency gate", out)
+        self.assertIn("instructions 3/5", out)
+
+    def test_unequal_gating_is_flagged_as_conditional(self):
+        out = self.invoke(self.arms([0.2] * 5, [0.2] * 5, treatment_failed=1),
+                          "--expect-n", "5")[1]
+        self.assertIn("conditional on passing", out)
+
+    def test_gating_below_the_registered_n_refuses_a_verdict(self):
+        # Four of five treatment runs failed, so one run carries the efficiency number.
+        # The registered MDE was derived at n=5; clearing a five-run bar on the strength
+        # of one run is the flattering error, so the verdict is refused instead.
+        out = self.invoke(self.arms([0.30] * 5, [0.01] * 5, treatment_failed=4),
+                          "--expect-n", "5")[1]
+        self.assertIn("VERDICT: INCONCLUSIVE", out)
+        self.assertIn("does not apply to this sample", out)
+        self.assertNotIn("VERDICT: KEEP", out)
+
+    def test_an_error_contract_rejection_outranks_the_short_sample_guard(self):
+        # REJECT is a statement about correctness, not efficiency. A treatment that added
+        # F02 failures must still be rejected even though those same failures gated its
+        # arm below the registered n — otherwise the worst outcome hides behind the guard.
+        out = self.invoke(self.arms([0.2] * 5, [0.1] * 5, treatment_failed=4, failure="F02"),
+                          "--expect-n", "5")[1]
+        self.assertIn("VERDICT: REJECT", out)
+        self.assertIn("error-contract", out)
+
+    def test_a_fully_gated_arm_does_not_crash_the_analysis(self):
+        out = self.invoke(self.arms([0.2] * 5, [0.1] * 5, treatment_failed=5),
+                          "--expect-n", "5")[1]
+        self.assertIn("VERDICT: INCONCLUSIVE", out)
+        self.assertIn("instructions 0/5", out)
