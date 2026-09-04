@@ -42,6 +42,39 @@ INTERACTIVE=false
 # an experiment that wants it must ask, and the request is recorded in the run's invocation.
 ISOLATE_USER_SETTINGS=false
 
+# Let the runtime load skills. OFF by default, because `--disable-slash-commands` is what
+# keeps the operator's user-scope plugin skills out of a baseline run (harness bug #13: a
+# plugin skill fired in 5 of 23 runs of EXP-BE002-CLAUDEMD, and one of them wrote a planning
+# document and changed no production file at all). Leaving the default alone means every run
+# recorded before 2026-09-04 keeps its exact meaning.
+#
+# It has to be askable, though, because with the flag on NO SKILL OF ANY SCOPE CAN LOAD --
+# `claude --help` calls --disable-slash-commands "Disable all skills", and that is measured,
+# not read: 6 of 6 runs activated a project skill without it and 0 of 6 with it, at both the
+# root and the nested skill path, Fisher p = 0.0022. An experiment whose treatment IS a skill
+# therefore cannot run at all under the default, and would record a clean, confident null.
+# See agent-learning-lab/evidence/p03/skill-flag-probe-20260904T102230Z.md.
+#
+# The isolation the default buys is NOT lost when this is on: --setting-sources project
+# already blocks user-scope plugin skills on its own. Measured the same day, same binary and
+# model, on a real plugin skill: `-p "/gsd-help"` returns the skill's body without that flag
+# and `Unknown command` with it.
+ENABLE_SKILLS=false
+
+# Install the overlay, run every section-5 guard, print the verdict and exit 0 — without
+# starting an agent, evaluating, or persisting a run. This exists so the guards can be
+# PROVED to reject rather than assumed to: a control that has never been shown to refuse
+# anything is indistinguishable from one that refuses nothing, and until 2026-09-04 the
+# only way to exercise these guards was to spend a real benchmark run and a real agent call.
+# `runner/verify-skill-delivery.sh` drives every fixture through this and nothing else.
+CHECK_CUSTOMIZATION_ONLY=false
+
+# Set in section 5 when the overlay actually contains a SKILL.md. Declared here so the
+# control arm — which passes no --customization and never enters that block — does not hit
+# an unbound variable under `set -u`. A crash that lands only on the control arm is the
+# quietest way to shrink an experiment.
+CUSTOMIZATION_HAS_SKILL=false
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +89,8 @@ while [[ $# -gt 0 ]]; do
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
     --model)      AGENT_MODEL="$2"; shift 2 ;;
     --isolate-user-settings) ISOLATE_USER_SETTINGS=true; shift ;;
+    --enable-skills) ENABLE_SKILLS=true; shift ;;
+    --check-customization) CHECK_CUSTOMIZATION_ONLY=true; shift ;;
     --interactive) INTERACTIVE=true; shift ;;
     --keep)       KEEP_WORKTREE=true; shift ;;
     -h|--help)    usage ;;
@@ -261,7 +296,35 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
   # part of the diff, so the scope guard blames the agent for a change the *harness* made
   # — which failed every run of a treatment arm for a violation the agent never committed
   # and made the comparison meaningless. The customization is starting state, not output.
+  # -f ON THE OVERLAY'S OWN PATHS, AND ON NOTHING ELSE. `git add -A` respects .gitignore,
+  # and the benchmarks repo ignores `.claude/*` — so an overlay installing a Claude Code
+  # project skill at the documented root location staged nothing, and the commit below
+  # failed with "nothing to commit, working tree clean". The harness refused to start a run
+  # whose treatment it could not commit, which is the right refusal; but the treatment was
+  # legitimate and the ignore rule was written for the operator's own dotfiles, not for an
+  # experiment's overlay.
+  #
+  # DISCLOSED HARNESS MOVE, 2026-09-04, the second in this track. The alternative was one
+  # line in agent-observatory-benchmarks/.gitignore, and that file is read by the
+  # evaluator's scope guard (`git ls-files --others --exclude-standard`), so changing it
+  # changes what the benchmark can flag. This does not: the overlay is committed as the
+  # evaluation baseline, so it is starting state and never appears in the agent's diff.
+  #
+  # Scoped to the overlay's paths deliberately. A blanket `add -A -f` would sweep in build
+  # output and anything else the benchmark ignores on purpose, and put it in the baseline.
+  OVERLAY_PATHS=()
+  while IFS= read -r rel; do OVERLAY_PATHS+=("${rel#./}"); done < <(
+    cd "$CUSTOMIZATION_DIR" && find . -type f
+  )
   git -C "$WORKTREE" add -A >/dev/null 2>&1
+  if [[ ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
+    FORCED=$(git -C "$WORKTREE" check-ignore -- "${OVERLAY_PATHS[@]}" 2>/dev/null)
+    if [[ -n "$FORCED" ]]; then
+      echo "  overlay paths the benchmark's .gitignore excludes, force-added into the setup commit:"
+      while IFS= read -r ig; do echo "    $ig"; done <<<"$FORCED"
+    fi
+    git -C "$WORKTREE" add -f -- "${OVERLAY_PATHS[@]}" >/dev/null 2>&1
+  fi
   git -C "$WORKTREE" -c user.email=runner@observatory -c user.name=observatory-runner \
       commit -qm "experiment setup: install customization for variant '${VARIANT}'" \
     || die "failed to commit the customization overlay"
@@ -306,6 +369,45 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
       echo "  instruction file ${INSTRUCTION_FILE} present — ${RUNTIME} reads this"
     fi
   fi
+
+  # --- the same assertion, for the one treatment class it did not cover ------
+  # A skill is a treatment whose delivery the checks above cannot see. It is not an
+  # instruction file, so INSTRUCTION_FILE says nothing about it; it commits and hashes and
+  # evaluates exactly like a working arm; and by default this runner tells the runtime to
+  # ignore it. `claude --help` on --disable-slash-commands is "Disable all skills", and
+  # measurement agrees: a project skill activated on 6 of 6 runs without the flag and 0 of 6
+  # with it, at BOTH the root and the nested skill path (Fisher p = 0.0022, 2026-09-04).
+  #
+  # So a skill overlay under the default is Phase 1 again with a different filename: fifteen
+  # runs, three arms agreeing perfectly, and a confident conclusion that the description does
+  # not matter, drawn from runs in which skills were switched off. This refuses instead.
+  SKILL_FILES=$(find "$CUSTOMIZATION_DIR" -type f -name SKILL.md 2>/dev/null | head -20)
+  if [[ -n "$SKILL_FILES" ]]; then
+    CUSTOMIZATION_HAS_SKILL=true
+    echo "  customization installs $(printf '%s\n' "$SKILL_FILES" | grep -c .) SKILL.md file(s)"
+    if [[ "$ENABLE_SKILLS" != true ]]; then
+      die "customization installs a skill, and this run would disable skills.
+    ${RUNTIME} is launched with the runtime's own 'disable all skills' switch unless
+    --enable-skills is passed, so the SKILL.md files below would be copied, committed and
+    hashed, and never loaded. Every check this harness has would pass and the arm would
+    silently be a second baseline.
+$(printf '      %s\n' "$SKILL_FILES")
+    Pass --enable-skills (ENABLE_SKILLS=1 via the Makefile) on EVERY arm of the comparison,
+    including the control, so the switch is not itself a difference between arms."
+    fi
+  fi
+fi
+
+if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
+  # Report what the setup commit actually TRACKS, not what was copied. "The file is in the
+  # worktree" is the claim that cost this project twenty runs in Phase 1; `git ls-files` is
+  # the claim that means something.
+  if [[ -n "$CUSTOMIZATION_DIR" && ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
+    TRACKED=$(git -C "$WORKTREE" ls-files -- "${OVERLAY_PATHS[@]}" | grep -c . || true)
+    echo "  tracked overlay files in the setup commit: ${TRACKED} of ${#OVERLAY_PATHS[@]}"
+  fi
+  echo "run-agent: customization checks passed"
+  exit 0
 fi
 
 hash_of() {
@@ -407,9 +509,16 @@ case "$RUNTIME" in
     CLAUDE_ARGS=(
       --permission-mode acceptEdits
       --strict-mcp-config
-      --disable-slash-commands
       --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
     )
+    # --disable-slash-commands unless the experiment's treatment IS a skill. It is the
+    # default because it closes the operator's plugin channel; it is skippable because it
+    # closes the project channel too, and those are not the same channel. --setting-sources
+    # project keeps the operator's plugin skills out on its own -- measured, not assumed:
+    # `-p "/gsd-help"` returns a user plugin skill's body without it and `Unknown command`
+    # with it, and across the 28 runs launched with --isolate-user-settings, 0 carry a
+    # plugin-scope activation.
+    [[ "$ENABLE_SKILLS" == true ]] || CLAUDE_ARGS+=(--disable-slash-commands)
     # --setting-sources project: load project settings only, so ~/.claude/settings.json and
     # the 21 hooks registered in it never reach the agent. Verified not to disturb CLAUDE.md
     # discovery, which matters because that file *is* the treatment — unlike --bare, which
@@ -776,15 +885,33 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
       ABORT_REASON="telemetry reports 0 model calls and 0 tool calls for a run that changed files — the collector missed it"
     fi
 
-    SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"
-    if [[ "${SKILL_CALLS:-0}" -gt 0 ]]; then
+    # Contamination is decided BY SOURCE, in lib/classify-skill-contamination.sh, which has
+    # its own fixtures. Until 2026-09-04 the rule lived here as "any Skill tool call is a
+    # leaked plugin skill" — right while skills were unconditionally off, and wrong the
+    # moment a skill became a treatment, when it condemned the arm that works as
+    # infrastructure and threw it away. See that file for the allowlist and why an unseen
+    # source must fail outside it.
+    CONTAM_REASON="$("$HERE/lib/classify-skill-contamination.sh" \
+      "$ENABLE_SKILLS" "$CUSTOMIZATION_HAS_SKILL" "$TELEMETRY")"
+    CONTAM_RC=$?
+    # 2 = a skill ran that this run did not install. 3 = the classifier could not decide.
+    # BOTH are infrastructure. A run whose contamination cannot be assessed is not a clean
+    # run, and treating only exit 2 here would put the "silence reads as good news" defect
+    # back at the caller after it was fixed inside the classifier.
+    if [[ "$CONTAM_RC" -eq 2 || "$CONTAM_RC" -eq 3 ]]; then
       AGENT_ABORTED=true
       ABORT_CLASS="F15"
-      ABORT_REASON="a plugin skill executed ${SKILL_CALLS}× despite --disable-slash-commands (harness bug #13)"
+      ABORT_REASON="$CONTAM_REASON"
       echo
-      echo "  !! CONTAMINATED: ${ABORT_REASON}"
-      echo "     The agent had tooling this experiment did not give it. Recorded as"
-      echo "     infrastructure so it is excluded and replaced, not averaged in."
+      if [[ "$CONTAM_RC" -eq 2 ]]; then
+        echo "  !! CONTAMINATED: ${ABORT_REASON}"
+        echo "     The agent had tooling this experiment did not give it. Recorded as"
+        echo "     infrastructure so it is excluded and replaced, not averaged in."
+      else
+        echo "  !! UNCLASSIFIABLE: ${ABORT_REASON}"
+        echo "     Contamination could not be assessed, which is not the same as absent."
+        echo "     Recorded as infrastructure so it is excluded and replaced."
+      fi
     fi
   else
     echo "    no telemetry found — behaviour metrics stay empty rather than guessed"
