@@ -43,7 +43,7 @@ NO_SKILL='{"skillActivations":[],"toolBreakdown":[{"tool":"Read","calls":9}]}'
 # copilot and codex emit no skill_activated records at all
 NO_SOURCES='{"toolBreakdown":[{"tool":"Skill","calls":2},{"tool":"Read","calls":9}]}'
 
-echo "verify-skill-contamination: 12 cases"
+echo "verify-skill-contamination: 16 cases"
 
 echo "  -- skills DISABLED: the default, and every run recorded before 2026-09-04 --"
 check "no skill call is clean"                       false false "$NO_SKILL"           0 "clean"
@@ -66,6 +66,15 @@ check "an UNSEEN source is a leak, not a pass"       true  true  "$(tel enterpri
 check "projectSettings on an arm that installed none" true false "$(tel projectSettings:1)" 2 "projectSettings(1)"
 # A Skill call the instrument cannot attribute is not cleared by silence.
 check "unattributable Skill calls are not cleared"   true  true  "$NO_SOURCES"         2 "no skill_activated record"
+
+# §4a round 2, at 2/2: unparseable telemetry used to come back `clean` with exit 0, because
+# both jq calls discarded stderr AND status. A run whose contamination could not be assessed
+# was reported as a run with no contamination.
+echo "  -- input this script cannot reason about must be REFUSED, never cleared --"
+check "malformed telemetry is unclassifiable, not clean"  true  true  '{'                   3 "not parseable"
+check "  and the same with skills disabled"               false false '{'                   3 "not parseable"
+check "an empty string is unclassifiable, not clean"      true  true  ''                     3 "telemetry is empty"
+check "a non-numeric Skill count is refused, not coerced" true  true  '{"toolBreakdown":[{"tool":"Skill","calls":"lots"}]}' 3 "not yield a numeric"
 
 echo
 echo "verify-skill-contamination: ${pass} passed, ${fail} failed"

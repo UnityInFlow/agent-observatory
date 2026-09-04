@@ -894,14 +894,24 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
     CONTAM_REASON="$("$HERE/lib/classify-skill-contamination.sh" \
       "$ENABLE_SKILLS" "$CUSTOMIZATION_HAS_SKILL" "$TELEMETRY")"
     CONTAM_RC=$?
-    if [[ "$CONTAM_RC" -eq 2 ]]; then
+    # 2 = a skill ran that this run did not install. 3 = the classifier could not decide.
+    # BOTH are infrastructure. A run whose contamination cannot be assessed is not a clean
+    # run, and treating only exit 2 here would put the "silence reads as good news" defect
+    # back at the caller after it was fixed inside the classifier.
+    if [[ "$CONTAM_RC" -eq 2 || "$CONTAM_RC" -eq 3 ]]; then
       AGENT_ABORTED=true
       ABORT_CLASS="F15"
       ABORT_REASON="$CONTAM_REASON"
       echo
-      echo "  !! CONTAMINATED: ${ABORT_REASON}"
-      echo "     The agent had tooling this experiment did not give it. Recorded as"
-      echo "     infrastructure so it is excluded and replaced, not averaged in."
+      if [[ "$CONTAM_RC" -eq 2 ]]; then
+        echo "  !! CONTAMINATED: ${ABORT_REASON}"
+        echo "     The agent had tooling this experiment did not give it. Recorded as"
+        echo "     infrastructure so it is excluded and replaced, not averaged in."
+      else
+        echo "  !! UNCLASSIFIABLE: ${ABORT_REASON}"
+        echo "     Contamination could not be assessed, which is not the same as absent."
+        echo "     Recorded as infrastructure so it is excluded and replaced."
+      fi
     fi
   else
     echo "    no telemetry found — behaviour metrics stay empty rather than guessed"

@@ -34,7 +34,14 @@
 # The last line is the point. It is an allowlist, and a source nobody has seen yet lands
 # OUTSIDE it. That is the direction an unknown should fail in.
 #
-# Exit 0 clean · 2 contaminated (reason on stdout) · 1 usage.
+# Exit 0 clean · 2 contaminated · 3 UNCLASSIFIABLE · 1 usage. Reason on stdout.
+#
+# Exit 3 exists because of §4a round 2, found at 2/2: both jq calls below discarded stderr
+# AND their exit status, so telemetry jq could not parse produced an empty source list, a
+# zero tool-call count, and the word `clean`. A run whose contamination could not be
+# assessed was reported as a run with no contamination. That is the same direction as every
+# other defect this guard has had — silence read as good news — and it is the direction a
+# harness must never fail in.
 
 set -uo pipefail
 
@@ -42,6 +49,8 @@ set -uo pipefail
   echo "usage: classify-skill-contamination.sh <true|false> <installed_skill:true|false> <telemetry-json>" >&2
   exit 1
 }
+[[ "$1" == true || "$1" == false ]] || { echo "first argument must be true or false" >&2; exit 1; }
+[[ "$2" == true || "$2" == false ]] || { echo "second argument must be true or false" >&2; exit 1; }
 ENABLE_SKILLS="$1"
 INSTALLED_SKILL="$2"
 TELEMETRY="$3"
@@ -51,9 +60,26 @@ command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 # Fall back to the tool-call count when the runtime does not report activations by source
 # (copilot and codex do not emit skill_activated at all). A count with no source cannot be
 # cleared by an allowlist, so it stays contamination under the old rule.
+# Parse once, and REFUSE if it does not parse. Checked before anything is read out of it,
+# so an unreadable blob cannot reach the allowlist below and come back clean.
+if [[ -z "${TELEMETRY// }" ]]; then
+  echo "telemetry is empty — contamination could not be classified"
+  exit 3
+fi
+if ! jq -e . >/dev/null 2>&1 <<<"$TELEMETRY"; then
+  echo "telemetry is not parseable JSON — contamination could not be classified"
+  exit 3
+fi
+
 SOURCES="$(jq -r '[.skillActivations[]? | "\(.source) \(.calls)"] | .[]' <<<"$TELEMETRY" 2>/dev/null)"
 TOOL_SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY" 2>/dev/null)"
-[[ "$TOOL_SKILL_CALLS" =~ ^[0-9]+$ ]] || TOOL_SKILL_CALLS=0
+# A non-numeric count means the field was present but not a number, which is a shape this
+# script cannot reason about. It is refused rather than coerced to zero — coercing it to
+# zero is exactly how the unparseable case used to come back clean.
+if ! [[ "$TOOL_SKILL_CALLS" =~ ^[0-9]+$ ]]; then
+  echo "toolBreakdown did not yield a numeric Skill count — contamination could not be classified"
+  exit 3
+fi
 
 if [[ "$ENABLE_SKILLS" != true ]]; then
   if [[ "$TOOL_SKILL_CALLS" -gt 0 ]]; then
