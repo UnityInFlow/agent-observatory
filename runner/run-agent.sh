@@ -42,6 +42,33 @@ INTERACTIVE=false
 # an experiment that wants it must ask, and the request is recorded in the run's invocation.
 ISOLATE_USER_SETTINGS=false
 
+# Let the runtime load skills. OFF by default, because `--disable-slash-commands` is what
+# keeps the operator's user-scope plugin skills out of a baseline run (harness bug #13: a
+# plugin skill fired in 5 of 23 runs of EXP-BE002-CLAUDEMD, and one of them wrote a planning
+# document and changed no production file at all). Leaving the default alone means every run
+# recorded before 2026-09-04 keeps its exact meaning.
+#
+# It has to be askable, though, because with the flag on NO SKILL OF ANY SCOPE CAN LOAD --
+# `claude --help` calls --disable-slash-commands "Disable all skills", and that is measured,
+# not read: 6 of 6 runs activated a project skill without it and 0 of 6 with it, at both the
+# root and the nested skill path, Fisher p = 0.0022. An experiment whose treatment IS a skill
+# therefore cannot run at all under the default, and would record a clean, confident null.
+# See agent-learning-lab/evidence/p03/skill-flag-probe-20260904T102230Z.md.
+#
+# The isolation the default buys is NOT lost when this is on: --setting-sources project
+# already blocks user-scope plugin skills on its own. Measured the same day, same binary and
+# model, on a real plugin skill: `-p "/gsd-help"` returns the skill's body without that flag
+# and `Unknown command` with it.
+ENABLE_SKILLS=false
+
+# Install the overlay, run every section-5 guard, print the verdict and exit 0 — without
+# starting an agent, evaluating, or persisting a run. This exists so the guards can be
+# PROVED to reject rather than assumed to: a control that has never been shown to refuse
+# anything is indistinguishable from one that refuses nothing, and until 2026-09-04 the
+# only way to exercise these guards was to spend a real benchmark run and a real agent call.
+# `runner/verify-skill-delivery.sh` drives every fixture through this and nothing else.
+CHECK_CUSTOMIZATION_ONLY=false
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +83,8 @@ while [[ $# -gt 0 ]]; do
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
     --model)      AGENT_MODEL="$2"; shift 2 ;;
     --isolate-user-settings) ISOLATE_USER_SETTINGS=true; shift ;;
+    --enable-skills) ENABLE_SKILLS=true; shift ;;
+    --check-customization) CHECK_CUSTOMIZATION_ONLY=true; shift ;;
     --interactive) INTERACTIVE=true; shift ;;
     --keep)       KEEP_WORKTREE=true; shift ;;
     -h|--help)    usage ;;
@@ -306,6 +335,37 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
       echo "  instruction file ${INSTRUCTION_FILE} present — ${RUNTIME} reads this"
     fi
   fi
+
+  # --- the same assertion, for the one treatment class it did not cover ------
+  # A skill is a treatment whose delivery the checks above cannot see. It is not an
+  # instruction file, so INSTRUCTION_FILE says nothing about it; it commits and hashes and
+  # evaluates exactly like a working arm; and by default this runner tells the runtime to
+  # ignore it. `claude --help` on --disable-slash-commands is "Disable all skills", and
+  # measurement agrees: a project skill activated on 6 of 6 runs without the flag and 0 of 6
+  # with it, at BOTH the root and the nested skill path (Fisher p = 0.0022, 2026-09-04).
+  #
+  # So a skill overlay under the default is Phase 1 again with a different filename: fifteen
+  # runs, three arms agreeing perfectly, and a confident conclusion that the description does
+  # not matter, drawn from runs in which skills were switched off. This refuses instead.
+  SKILL_FILES=$(find "$CUSTOMIZATION_DIR" -type f -name SKILL.md 2>/dev/null | head -20)
+  if [[ -n "$SKILL_FILES" ]]; then
+    echo "  customization installs $(printf '%s\n' "$SKILL_FILES" | grep -c .) SKILL.md file(s)"
+    if [[ "$ENABLE_SKILLS" != true ]]; then
+      die "customization installs a skill, and this run would disable skills.
+    ${RUNTIME} is launched with the runtime's own 'disable all skills' switch unless
+    --enable-skills is passed, so the SKILL.md files below would be copied, committed and
+    hashed, and never loaded. Every check this harness has would pass and the arm would
+    silently be a second baseline.
+$(printf '      %s\n' "$SKILL_FILES")
+    Pass --enable-skills (ENABLE_SKILLS=1 via the Makefile) on EVERY arm of the comparison,
+    including the control, so the switch is not itself a difference between arms."
+    fi
+  fi
+fi
+
+if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
+  echo "run-agent: customization checks passed"
+  exit 0
 fi
 
 hash_of() {
@@ -407,9 +467,16 @@ case "$RUNTIME" in
     CLAUDE_ARGS=(
       --permission-mode acceptEdits
       --strict-mcp-config
-      --disable-slash-commands
       --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
     )
+    # --disable-slash-commands unless the experiment's treatment IS a skill. It is the
+    # default because it closes the operator's plugin channel; it is skippable because it
+    # closes the project channel too, and those are not the same channel. --setting-sources
+    # project keeps the operator's plugin skills out on its own -- measured, not assumed:
+    # `-p "/gsd-help"` returns a user plugin skill's body without it and `Unknown command`
+    # with it, and across the 28 runs launched with --isolate-user-settings, 0 carry a
+    # plugin-scope activation.
+    [[ "$ENABLE_SKILLS" == true ]] || CLAUDE_ARGS+=(--disable-slash-commands)
     # --setting-sources project: load project settings only, so ~/.claude/settings.json and
     # the 21 hooks registered in it never reach the agent. Verified not to disturb CLAUDE.md
     # discovery, which matters because that file *is* the treatment — unlike --bare, which
