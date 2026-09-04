@@ -28,10 +28,11 @@
 #   A. the guard REFUSES a skill overlay when skills would be disabled     (no model call)
 #   B. the guard ADMITS the same overlay when --enable-skills is passed    (no model call)
 #   C. the guard stays silent for a customization with no skill in it      (no model call)
+#   F. an overlay at a path the benchmark IGNORES is still tracked          (no model call)
 #   D. positive control: the skill ACTIVATES with skills enabled           (one model call)
 #   E. negative:         the same skill does NOT activate with them off    (one model call)
 #
-# A, B and C are free and run everywhere. D and E cost two small claude calls and need
+# A, B, C and F are free and run everywhere. D and E cost two small claude calls and need
 # authentication, so they are skipped with a stated reason when claude is absent — skipped,
 # and reported as skipped, never silently passed.
 #
@@ -107,6 +108,24 @@ if [[ $rc -eq 0 ]] && ! grep -q "SKILL.md" <<<"$out"; then
   ok "C: a customization with no skill is untouched by the guard"
 else
   bad "C: expected exit 0 and no mention of SKILL.md, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+fi
+
+# F — the root skill path is gitignored in the benchmarks repo (`.gitignore:19` is
+# `.claude/*`), so `git add -A` staged nothing and the setup commit failed outright. The
+# runner now force-adds the overlay's OWN paths. This asserts what the commit TRACKS, which
+# is the only version of the claim that means anything — "the file is in the worktree" is
+# what Phase 1 believed for twenty runs.
+ROOT_OVERLAY="$TMP/root-skill"
+mkdir -p "$ROOT_OVERLAY/.claude/skills/probe-fixture"
+cp "$SKILL_OVERLAY/sample-service/.claude/skills/probe-fixture/SKILL.md" \
+   "$ROOT_OVERLAY/.claude/skills/probe-fixture/SKILL.md"
+out=$("$RUNNER" --runtime claude --benchmark BE-003 --experiment EXP-VERIFY-SKILL --api "$API_URL" \
+        --customization "$ROOT_OVERLAY" --enable-skills --check-customization 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && grep -q "force-added into the setup commit" <<<"$out" \
+   && grep -q "tracked overlay files in the setup commit: 1 of 1" <<<"$out"; then
+  ok "F: an overlay at the ignored root skill path is force-added and tracked 1 of 1"
+else
+  bad "F: expected the force-add line and 1 of 1 tracked, got exit $rc: $(grep -E 'tracked|force-added|run-agent:' <<<"$out" | tr '\n' ' ')"
 fi
 
 echo "== does the flag actually decide it? two model calls =="

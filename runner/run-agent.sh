@@ -290,7 +290,35 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
   # part of the diff, so the scope guard blames the agent for a change the *harness* made
   # — which failed every run of a treatment arm for a violation the agent never committed
   # and made the comparison meaningless. The customization is starting state, not output.
+  # -f ON THE OVERLAY'S OWN PATHS, AND ON NOTHING ELSE. `git add -A` respects .gitignore,
+  # and the benchmarks repo ignores `.claude/*` — so an overlay installing a Claude Code
+  # project skill at the documented root location staged nothing, and the commit below
+  # failed with "nothing to commit, working tree clean". The harness refused to start a run
+  # whose treatment it could not commit, which is the right refusal; but the treatment was
+  # legitimate and the ignore rule was written for the operator's own dotfiles, not for an
+  # experiment's overlay.
+  #
+  # DISCLOSED HARNESS MOVE, 2026-09-04, the second in this track. The alternative was one
+  # line in agent-observatory-benchmarks/.gitignore, and that file is read by the
+  # evaluator's scope guard (`git ls-files --others --exclude-standard`), so changing it
+  # changes what the benchmark can flag. This does not: the overlay is committed as the
+  # evaluation baseline, so it is starting state and never appears in the agent's diff.
+  #
+  # Scoped to the overlay's paths deliberately. A blanket `add -A -f` would sweep in build
+  # output and anything else the benchmark ignores on purpose, and put it in the baseline.
+  OVERLAY_PATHS=()
+  while IFS= read -r rel; do OVERLAY_PATHS+=("${rel#./}"); done < <(
+    cd "$CUSTOMIZATION_DIR" && find . -type f
+  )
   git -C "$WORKTREE" add -A >/dev/null 2>&1
+  if [[ ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
+    FORCED=$(git -C "$WORKTREE" check-ignore -- "${OVERLAY_PATHS[@]}" 2>/dev/null)
+    if [[ -n "$FORCED" ]]; then
+      echo "  overlay paths the benchmark's .gitignore excludes, force-added into the setup commit:"
+      while IFS= read -r ig; do echo "    $ig"; done <<<"$FORCED"
+    fi
+    git -C "$WORKTREE" add -f -- "${OVERLAY_PATHS[@]}" >/dev/null 2>&1
+  fi
   git -C "$WORKTREE" -c user.email=runner@observatory -c user.name=observatory-runner \
       commit -qm "experiment setup: install customization for variant '${VARIANT}'" \
     || die "failed to commit the customization overlay"
@@ -364,6 +392,13 @@ $(printf '      %s\n' "$SKILL_FILES")
 fi
 
 if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
+  # Report what the setup commit actually TRACKS, not what was copied. "The file is in the
+  # worktree" is the claim that cost this project twenty runs in Phase 1; `git ls-files` is
+  # the claim that means something.
+  if [[ -n "$CUSTOMIZATION_DIR" && ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
+    TRACKED=$(git -C "$WORKTREE" ls-files -- "${OVERLAY_PATHS[@]}" | grep -c . || true)
+    echo "  tracked overlay files in the setup commit: ${TRACKED} of ${#OVERLAY_PATHS[@]}"
+  fi
   echo "run-agent: customization checks passed"
   exit 0
 fi
