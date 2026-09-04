@@ -69,6 +69,12 @@ ENABLE_SKILLS=false
 # `runner/verify-skill-delivery.sh` drives every fixture through this and nothing else.
 CHECK_CUSTOMIZATION_ONLY=false
 
+# Set in section 5 when the overlay actually contains a SKILL.md. Declared here so the
+# control arm — which passes no --customization and never enters that block — does not hit
+# an unbound variable under `set -u`. A crash that lands only on the control arm is the
+# quietest way to shrink an experiment.
+CUSTOMIZATION_HAS_SKILL=false
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -377,6 +383,7 @@ if [[ -n "$CUSTOMIZATION_DIR" ]]; then
   # not matter, drawn from runs in which skills were switched off. This refuses instead.
   SKILL_FILES=$(find "$CUSTOMIZATION_DIR" -type f -name SKILL.md 2>/dev/null | head -20)
   if [[ -n "$SKILL_FILES" ]]; then
+    CUSTOMIZATION_HAS_SKILL=true
     echo "  customization installs $(printf '%s\n' "$SKILL_FILES" | grep -c .) SKILL.md file(s)"
     if [[ "$ENABLE_SKILLS" != true ]]; then
       die "customization installs a skill, and this run would disable skills.
@@ -878,11 +885,19 @@ if [[ "$RUNTIME" == "copilot" || "$RUNTIME" == "claude" ]]; then
       ABORT_REASON="telemetry reports 0 model calls and 0 tool calls for a run that changed files — the collector missed it"
     fi
 
-    SKILL_CALLS="$(jq -r '[.toolBreakdown[]? | select(.tool == "Skill") | .calls] | add // 0' <<<"$TELEMETRY")"
-    if [[ "${SKILL_CALLS:-0}" -gt 0 ]]; then
+    # Contamination is decided BY SOURCE, in lib/classify-skill-contamination.sh, which has
+    # its own fixtures. Until 2026-09-04 the rule lived here as "any Skill tool call is a
+    # leaked plugin skill" — right while skills were unconditionally off, and wrong the
+    # moment a skill became a treatment, when it condemned the arm that works as
+    # infrastructure and threw it away. See that file for the allowlist and why an unseen
+    # source must fail outside it.
+    CONTAM_REASON="$("$HERE/lib/classify-skill-contamination.sh" \
+      "$ENABLE_SKILLS" "$CUSTOMIZATION_HAS_SKILL" "$TELEMETRY")"
+    CONTAM_RC=$?
+    if [[ "$CONTAM_RC" -eq 2 ]]; then
       AGENT_ABORTED=true
       ABORT_CLASS="F15"
-      ABORT_REASON="a plugin skill executed ${SKILL_CALLS}× despite --disable-slash-commands (harness bug #13)"
+      ABORT_REASON="$CONTAM_REASON"
       echo
       echo "  !! CONTAMINATED: ${ABORT_REASON}"
       echo "     The agent had tooling this experiment did not give it. Recorded as"

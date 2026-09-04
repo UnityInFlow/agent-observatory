@@ -29,10 +29,11 @@
 #   B. the guard ADMITS the same overlay when --enable-skills is passed    (no model call)
 #   C. the guard stays silent for a customization with no skill in it      (no model call)
 #   F. an overlay at a path the benchmark IGNORES is still tracked          (no model call)
+#   G. NO customization at all still gets through — the control arm's path   (no model call)
 #   D. positive control: the skill ACTIVATES with skills enabled           (one model call)
 #   E. negative:         the same skill does NOT activate with them off    (one model call)
 #
-# A, B, C and F are free and run everywhere. D and E cost two small claude calls and need
+# A, B, C, F and G are free and run everywhere. D and E cost two small claude calls and need
 # authentication, so they are skipped with a stated reason when claude is absent — skipped,
 # and reported as skipped, never silently passed.
 #
@@ -126,6 +127,20 @@ if [[ $rc -eq 0 ]] && grep -q "force-added into the setup commit" <<<"$out" \
   ok "F: an overlay at the ignored root skill path is force-added and tracked 1 of 1"
 else
   bad "F: expected the force-add line and 1 of 1 tracked, got exit $rc: $(grep -E 'tracked|force-added|run-agent:' <<<"$out" | tr '\n' ' ')"
+fi
+
+# G — the control arm passes no --customization, so it skips the whole block above. The
+# overlay path array is only populated inside that block, and this script runs with `set -u`:
+# a reference to it on the control path would abort with "unbound variable". That failure
+# would land on the CONTROL ARM ONLY, which is the arm least likely to be watched and the
+# direction that quietly shrinks an experiment's n.
+out=$("$RUNNER" --runtime claude --benchmark BE-003 --experiment EXP-VERIFY-SKILL --api "$API_URL" \
+        --check-customization 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && grep -q "customization checks passed" <<<"$out" \
+   && ! grep -q "unbound variable" <<<"$out"; then
+  ok "G: a run with no customization passes the same checks (the control arm's path)"
+else
+  bad "G: expected exit 0 and no unbound-variable error, got exit $rc: $(tail -3 <<<"$out" | tr '\n' ' ')"
 fi
 
 echo "== does the flag actually decide it? two model calls =="

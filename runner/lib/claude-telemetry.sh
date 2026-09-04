@@ -82,6 +82,13 @@ jq -s -c --arg runId "$RUN_ID" '
   | ($records | map(select(str("event.name") == "hook_registered")))       as $hooksReg
   | ($records | map(select(str("event.name") == "hook_execution_start")))  as $hookExec
   | ($records | map(select(str("event.name") == "plugin_loaded")))         as $plugins
+  # Skill activations BY SOURCE, not as one number. The contamination guard in run-agent.sh
+  # used to count `Skill` tool calls and call every one of them a leaked plugin skill, which
+  # was correct only while --disable-slash-commands was unconditional. The moment a skill
+  # became a legitimate treatment, that rule condemned the treatment arm as infrastructure
+  # and excluded it — the arm that works, marked broken. A source is the only thing that
+  # separates "the skill this run installed" from "something the operator left lying around".
+  | ($records | map(select(str("event.name") == "skill_activated")))       as $skills
 
   | {
       # Only some records carry a trace context — the pre-session ones (plugin_loaded,
@@ -122,6 +129,10 @@ jq -s -c --arg runId "$RUN_ID" '
         hookExecutions:  ($hookExec | length),
         pluginsLoaded:   ($plugins  | length)
       },
+      skillActivations: (
+        $skills | map(str("skill.source") // "unknown")
+        | group_by(.) | map({source: .[0], calls: length}) | sort_by(-.calls)
+      ),
       toolBreakdown: (
         $tools | map(str("tool_name") // "unknown")
         | group_by(.) | map({tool: .[0], calls: length}) | sort_by(-.calls)
