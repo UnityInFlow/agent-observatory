@@ -184,6 +184,7 @@ run-benchmark: ## Run a benchmark (RUNTIME= VARIANT= EXPERIMENT= BENCHMARK= CUST
 	    --experiment $${EXPERIMENT:-EXP-001} \
 	    $${MODEL:+--model $$MODEL} \
 	    $${CUSTOMIZATION:+--customization $$CUSTOMIZATION} \
+	    $${AGENT:+--agent $$AGENT} \
 	    $${ISOLATE_USER_SETTINGS:+--isolate-user-settings} \
 	    $${ENABLE_SKILLS:+--enable-skills} \
 	    $${KEEP:+--keep} \
@@ -195,7 +196,7 @@ baseline-report: ## Single-arm baseline: median and range, never a mean (EXPERIM
 
 .PHONY: baseline-runs
 baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MODEL= KEEP=1)
-# THE SAMPLE SIZE IS ASSERTED, NOT ASSUMED. `|| true` in the loop is right — one dead run
+# THE SAMPLE SIZE IS ASSERTED, NOT ASSUMED. Tolerating a failed run is right — one dead run
 # should not abandon a batch — but until 2026-08-28 nothing counted what survived, so a
 # batch of five where three died printed five banners and exited 0. A baseline reported at
 # n=5 that is really n=2 is not noisy; it is a different measurement.
@@ -203,13 +204,25 @@ baseline-runs: ## Repeat a benchmark N times to expose variance (N=5 RUNTIME= MO
 # What is counted is RECORDED RUNS, not invocation exit codes. run-agent.sh exits with the
 # evaluator's code, so an agent that legitimately fails the benchmark exits non-zero and is
 # still a valid observation. Counting exits would discard exactly the runs B2 exists to see.
+#
+# ONE EXIT CODE IS NOT A RUN OUTCOME AND IS NOT TOLERATED: 9 means the tool schema the
+# runtime delivered is not the one the overlay declares, which is decision-rule row 0a — the
+# treatment did not arrive. Continuing would spend the rest of the batch on an arm that is
+# secretly a baseline and then report it at full n. `|| true`, which used to sit here,
+# swallowed every code equally and would have swallowed this one.
 	@exp="$${EXPERIMENT:-EXP-001}"; n=$${N:-5}; \
 	before=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
 	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
 	echo "==> $$exp held $$before run(s) before this batch"; \
 	for i in $$(seq 1 $$n); do \
 	  echo ""; echo "================ baseline run $$i / $$n ================"; \
-	  $(MAKE) --no-print-directory run-benchmark || true; \
+	  $(MAKE) --no-print-directory run-benchmark; rc=$$?; \
+	  if [ $$rc -eq 9 ]; then \
+	    echo "!! run $$i returned 9: the delivered tool schema is not the declared one."; \
+	    echo "   Decision-rule row 0a. Stopping the batch here rather than spending the"; \
+	    echo "   remaining $$((n - i)) run(s) on an arm whose treatment did not arrive."; \
+	    break; \
+	  fi; \
 	done; \
 	after=$$(curl -fsS "$(API_URL)/api/runs" 2>/dev/null \
 	  | jq --arg e "$$exp" '[.[] | select(.experimentKey == $$e)] | length' 2>/dev/null || echo 0); \
