@@ -12,6 +12,12 @@
 # Step 7 defaults to `--runtime manual`: §24 says do not automate the agent launch until
 # several runs have been watched by hand, and §11 says the first run should be interactive
 # so students see permissions and actions happen.
+#
+#   --agent <name>   claude only. Hand the task TO the overlay's agent instead of to a main
+#                    session that merely knows about it. Without it a .claude/agents/*.md
+#                    overlay constrains a subagent nobody invokes; section 5 refuses that
+#                    combination outright. Exit 9 means the delivered tool schema was not
+#                    the declared one — row 0a, the treatment did not arrive.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,6 +81,28 @@ CHECK_CUSTOMIZATION_ONLY=false
 # quietest way to shrink an experiment.
 CUSTOMIZATION_HAS_SKILL=false
 
+# Make an installed agent overlay THE AGENT THAT HANDLES THE TASK, not a subagent the main
+# session may choose to delegate to.
+#
+# WITHOUT THIS FLAG A `.claude/agents/*.md` OVERLAY IS NOT A BOUNDARY. It is copied,
+# committed, hashed and registered — and the main session keeps all 29 tools, because the
+# overlay only describes a subagent it is free to ignore. Every check this harness has would
+# pass, the arm would be silently a second baseline, and what got measured would be
+# DELEGATION rather than a tool boundary. That is the same failure Phase 1 paid twenty runs
+# for and Phase 3 paid fifteen for, in its third costume.
+#
+# Empty by default, so every run recorded before this flag existed keeps its exact meaning.
+# Guarded two ways in section 5: an agent overlay without --agent is refused, and --agent
+# naming a file the overlay does not install is refused.
+AGENT_NAME=""
+
+# Where the delivered tool schema is written. `init.tools` from the run's own `system`/`init`
+# record is the ONLY evidence that a `tools:` line reached the model as written — the file is
+# copied and hashed identically whether the runtime honours it or rewrites it. TMPDIR is the
+# default and macOS reaps it, so a batch that wants durable evidence points this somewhere
+# that survives.
+INIT_SCHEMA_DIR="${INIT_SCHEMA_DIR:-${TMPDIR:-/tmp}}"
+
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0; }
 
 while [[ $# -gt 0 ]]; do
@@ -87,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --api)        API="$2"; shift 2 ;;
     --web)        WEB="$2"; shift 2 ;;
     --customization) CUSTOMIZATION_DIR="$2"; shift 2 ;;
+    --agent)      AGENT_NAME="$2"; shift 2 ;;
     --model)      AGENT_MODEL="$2"; shift 2 ;;
     --isolate-user-settings) ISOLATE_USER_SETTINGS=true; shift ;;
     --enable-skills) ENABLE_SKILLS=true; shift ;;
@@ -282,6 +311,22 @@ if [[ -n "$AGENT_MODEL" && "$MODEL_FORWARDED" != true ]]; then
     Recording it would put a model in runtime.model that never ran."
 fi
 
+# --- the same refusal for --agent, and it is not hypothetical --------------
+# `--agent` exists on the claude CLI and NOWHERE ELSE here. codex restricts by
+# `sandbox_mode`, not by a named agent with a tools: allowlist, and the copilot arm does not
+# exist (Decision G). Accepting the flag on those runtimes and dropping it is exactly the bug
+# --model had until 2026-08-28: the caller asks for a boundary, the runner says nothing, and
+# the arm is a baseline wearing the treatment's label.
+case "$RUNTIME" in
+  claude) AGENT_FLAG_FORWARDED=true ;;
+  *)      AGENT_FLAG_FORWARDED=false ;;
+esac
+if [[ -n "$AGENT_NAME" && "$AGENT_FLAG_FORWARDED" != true ]]; then
+  die "--agent '$AGENT_NAME' is not forwarded to runtime '$RUNTIME'.
+    Only the claude arm has a named-agent flag. The run would install the overlay, hash it,
+    and hand the task to an unconstrained session — an arm labelled as bounded that is not."
+fi
+
 # --- 5. install and hash the customization (§12) ----------------------------
 # The commit the *evaluation* measures against — always a setup commit, never the raw
 # benchmark HEAD: the worktree has already had the authoring material stripped out of it,
@@ -396,6 +441,55 @@ $(printf '      %s\n' "$SKILL_FILES")
     including the control, so the switch is not itself a difference between arms."
     fi
   fi
+
+  # --- the same assertion again, for the treatment class B4 introduces ------
+  # An agent overlay is the third treatment whose delivery every check here would report as
+  # working while the model never saw it. The pattern is now familiar enough to name: the
+  # file is copied, committed, tracked and hashed, and NONE OF THAT IS THE TREATMENT. For an
+  # instruction file the missing link was the filename the runtime reads; for a skill it was
+  # --disable-slash-commands; for an agent it is that `.claude/agents/*.md` registers a
+  # SUBAGENT THE MAIN SESSION MAY DELEGATE TO, and the main session keeps every tool it had.
+  #
+  # Measuring that arrangement measures delegation, not a boundary — and it would do so
+  # while reporting a customization hash, a clean setup commit and a green evaluator.
+  AGENT_FILES=$(find "$CUSTOMIZATION_DIR" -type f -path '*/.claude/agents/*.md' 2>/dev/null | head -20)
+  if [[ -n "$AGENT_FILES" ]]; then
+    echo "  customization installs $(printf '%s\n' "$AGENT_FILES" | grep -c .) agent overlay file(s)"
+    if [[ -z "$AGENT_NAME" ]]; then
+      die "customization installs an agent overlay, and this run passes no --agent.
+    The files below would be copied, committed and hashed, and the task would still be
+    handled by an ordinary main session holding every tool. The overlay's tools: line would
+    constrain a subagent that is never invoked, and the arm would silently be a second
+    baseline with a customization hash on it.
+$(printf '      %s\n' "$AGENT_FILES")
+    Pass --agent <name> naming one of them, on the treatment arm only."
+    fi
+    # --agent must name a file this overlay actually installs. `claude --agent no-such-agent`
+    # does exit 1 and print its registry, which is a real L2 — but it fails AFTER the
+    # worktree is built, the setup commit is made and the run id exists, and it names the
+    # registry rather than the overlay. This fails earlier and says which file was expected.
+    if [[ -n "$AGENT_NAME" ]] && ! grep -q "/\.claude/agents/${AGENT_NAME}\.md\$" <<<"$AGENT_FILES"; then
+      die "--agent '${AGENT_NAME}' names no file this customization installs.
+    Expected a path ending .claude/agents/${AGENT_NAME}.md. Installed:
+$(printf '      %s\n' "$AGENT_FILES")
+    A name that does not resolve leaves the session unbounded, which is the arm this guard
+    exists to make impossible."
+    fi
+  elif [[ -n "$AGENT_NAME" ]]; then
+    die "--agent '${AGENT_NAME}' was passed, but this customization installs no
+    .claude/agents/*.md file at all. Nothing would define the agent, so the flag would
+    either fail at launch or be answered by an agent from outside the overlay — neither of
+    which is the treatment this arm claims."
+  fi
+fi
+
+# --agent with NO customization at all: there is no overlay to define the agent, so whatever
+# the flag resolves to came from outside the experiment. Refused here rather than inside the
+# block above, which the control arm never enters.
+if [[ -n "$AGENT_NAME" && -z "$CUSTOMIZATION_DIR" ]]; then
+  die "--agent '${AGENT_NAME}' was passed with no --customization.
+    No overlay installs an agent by that name, so the boundary would be defined by
+    something this run does not control and cannot hash."
 fi
 
 if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
@@ -525,11 +619,31 @@ case "$RUNTIME" in
     # would switch the treatment off along with the hooks.
     [[ "$ISOLATE_USER_SETTINGS" == true ]] && CLAUDE_ARGS+=(--setting-sources project)
     [[ -n "$AGENT_MODEL" ]] && CLAUDE_ARGS+=(--model "$AGENT_MODEL")
+    # --agent: hand the task to the overlay's agent instead of to a main session that may
+    # delegate to it. Section 5 has already refused every way of getting here with an agent
+    # overlay and no name, or a name and no file.
+    [[ -n "$AGENT_NAME" ]] && CLAUDE_ARGS+=(--agent "$AGENT_NAME")
     if [[ "$INTERACTIVE" == true ]]; then
       ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" ) \
         || echo "run-agent: claude exited non-zero — recording the run anyway"
     else
-      ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" -p "$(cat "$BENCH_DIR/task.md")" ) \
+      # --output-format stream-json --verbose: THE RUN'S OWN `system`/`init` RECORD IS THE
+      # ONLY PLACE THE DELIVERED TOOL SCHEMA EXISTS, and without it a `tools:` allowlist is
+      # a claim about a file rather than a measurement of what the model was handed. On
+      # 2.1.260 the two differ: `Read, Grep, Glob, Bash` was delivered as `[Read, Bash]` on
+      # 10 of 10 runs of E-005's arm F. Disclosed as the fourth harness move of Track B,
+      # after 2.1.251 -> 2.1.259, the overlay force-add, and 2.1.259 -> 2.1.260.
+      #
+      # It applies to EVERY claude run of both arms, never to the treatment arm only —
+      # otherwise the launch itself becomes a between-arm difference and the comparison is
+      # confounded by the instrument that was added to protect it.
+      #
+      # No registered metric is read from this log: cost, tool calls and duration all come
+      # from telemetry (section 9b). The log is used for the infrastructure-signature check,
+      # which still matches, and which section 10 now also reads structurally.
+      ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" \
+          --output-format stream-json --verbose \
+          -p "$(cat "$BENCH_DIR/task.md")" ) \
         2>&1 | tee "$AGENT_LOG" \
         || echo "run-agent: claude exited non-zero — recording the run anyway"
     fi
@@ -698,6 +812,42 @@ esac
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
 
+# --- 8c. WAS THE TOOL LIST THE MODEL GOT THE ONE THE OVERLAY ASKED FOR? -----
+# Author decision 8 (2026-09-04), promoted here from a probe script someone had to remember
+# to run into a check that executes on every claude run of every arm.
+#
+# A `tools:` line is a REQUEST. The runtime resolves it, and the resolution is not the
+# identity function: on 2.1.260, `Bash` in a subagent allowlist REMOVES `Grep` and `Glob`
+# from the delivered set — 16 of 16 with `Bash` dropped both, 20 of 20 without it verbatim,
+# across 36 observations. Nothing else in this harness can see that. The overlay is copied,
+# committed and hashed byte-identically whether the runtime honours the line or rewrites it,
+# so every existing check reports success over a scope that excludes the only thing the
+# treatment consists of. That is this project's house failure mode, and it has now cost a
+# comparison in three different costumes.
+#
+# The verdict is recorded on BOTH arms — the control's delivered set is evidence too, and
+# reading it is what turns "the control has no agent overlay" from a fact about the worktree
+# into an observation about the session. Only the treatment arm's is ASSERTED, because only
+# it declares a list to assert against.
+SCHEMA_RC=0
+SCHEMA_OUT=""
+if [[ "$RUNTIME" == "claude" && "$INTERACTIVE" != true && -f "$AGENT_LOG" ]]; then
+  mkdir -p "$INIT_SCHEMA_DIR" 2>/dev/null || true
+  SCHEMA_OUT="${INIT_SCHEMA_DIR}/init-schema-${RUN_ID}.txt"
+  OVERLAY_AGENT_FILE=""
+  [[ -n "$AGENT_NAME" && -f "$WORKTREE/.claude/agents/${AGENT_NAME}.md" ]] \
+    && OVERLAY_AGENT_FILE="$WORKTREE/.claude/agents/${AGENT_NAME}.md"
+  echo
+  echo "  delivered tool schema (init record):"
+  "$HERE/lib/check-init-schema.sh" "$AGENT_LOG" ${OVERLAY_AGENT_FILE:+"$OVERLAY_AGENT_FILE"} \
+    2>&1 | tee "$SCHEMA_OUT" | sed 's/^/    /'
+  SCHEMA_RC="${PIPESTATUS[0]}"
+  # PIPESTATUS, not $?. `cmd | tee | sed; echo $?` reports SED's exit code — the exact
+  # mistake that made four negative controls of another tool in this project print `exit=0`
+  # while the tool under test was never consulted.
+  echo "    (recorded at ${SCHEMA_OUT})"
+fi
+
 # --- 8b. what the runtime brought with it ----------------------------------
 # THE RECORD DID NOT SAY WHAT THE ARM WAS GIVEN, AND TWICE THAT COST A COMPARISON.
 #
@@ -796,6 +946,24 @@ if [[ "$RUNTIME" != "manual" && -f "$AGENT_LOG" && "$PRODUCED_NOTHING" == true ]
   if grep -qiE "$INFRA_SIGNATURE" "$AGENT_LOG"; then
     AGENT_ABORTED=true
     ABORT_REASON="$(grep -ioE "$INFRA_SIGNATURE" "$AGENT_LOG" | head -1)"
+  fi
+  # THE SIGNATURE LIST IS A LIST OF PHRASES, AND THE CLAUDE ARM NO LONGER SPEAKS IN PHRASES.
+  # With --output-format stream-json the failure arrives as a terminal `result` record whose
+  # `is_error` is true and whose `subtype` names the class (error_during_execution,
+  # error_max_turns, …) — words that appear in none of the five INFRA_SIGNATURE lines. Left
+  # alone, the format change would have quietly WEAKENED F13 detection for the one arm every
+  # experiment in this track uses, and a run killed by a quota would have been recorded as
+  # F03 "incorrect code": a harness failure relabelled as a fact about the agent.
+  #
+  # Structural, so it needs no vocabulary. Narrow, so it cannot condemn a run that produced
+  # a diff: this whole block is already gated on the agent having changed nothing.
+  if [[ "$AGENT_ABORTED" != true && "$RUNTIME" == "claude" ]]; then
+    RESULT_ERR="$(jq -r -R 'fromjson? | select(type == "object" and .type == "result" and .is_error == true) | .subtype // "error"' \
+                  "$AGENT_LOG" 2>/dev/null | tail -1)"
+    if [[ -n "$RESULT_ERR" ]]; then
+      AGENT_ABORTED=true
+      ABORT_REASON="the stream's terminal result record is an error: ${RESULT_ERR}"
+    fi
   fi
 fi
 
@@ -1047,4 +1215,26 @@ echo
 echo "  run recorded:  ${API}/api/runs/${RUN_ID}"
 echo "  UI:            ${WEB}/runs/${RUN_ID}"
 echo "  trace search:  { resource.observatory.run.id = \"${RUN_ID}\" }"
+
+# --- 12b. a schema verdict outranks the evaluator's ------------------------
+# The run is already persisted, deliberately: a run whose treatment did not arrive is
+# EVIDENCE, and deleting it or refusing to record it would destroy the only proof of what
+# happened. What must not happen is the batch continuing as though the arm were intact.
+#
+# Non-zero here stops a driver loop at the first bad run instead of at the twentieth. It
+# fires only when a list was actually declared — on the control arm the check records the
+# delivered set and asserts nothing, so a control can never fail this.
+if [[ -n "$AGENT_NAME" && "$SCHEMA_RC" -ne 0 ]]; then
+  echo
+  echo "  !! THE DELIVERED TOOL SCHEMA IS NOT THE ONE THE OVERLAY DECLARES."
+  echo "     check-init-schema exit ${SCHEMA_RC}; see ${SCHEMA_OUT}"
+  echo "     This is decision-rule row 0a: the file is not the treatment. The run is"
+  echo "     recorded and must NOT be scored, and the batch is VOID pending a redesign."
+  exit 9
+fi
+if [[ "$SCHEMA_RC" -ne 0 ]]; then
+  echo
+  echo "  warning: no usable init record for this run (check-init-schema exit ${SCHEMA_RC})." >&2
+  echo "  The delivered tool set is UNOBSERVED for it — absent, not proven equal." >&2
+fi
 exit "$EVAL_EXIT"
