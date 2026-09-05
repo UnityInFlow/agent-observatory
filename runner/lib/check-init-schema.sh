@@ -7,7 +7,7 @@
 # A `tools:` line in an agent overlay is a REQUEST, not the treatment. On Claude Code
 # 2.1.260 the runtime resolves it and the resolution is not the identity function: with
 # `Bash` present in a subagent allowlist, `Grep` and `Glob` are REMOVED from the delivered
-# set; without `Bash` the list arrives verbatim. 36 observations, no exception — 16 of 16
+# set; without `Bash` the list arrives verbatim. 45 observations, no exception — 19 of 19
 # dropped, 20 of 20 verbatim — across E-005's arms F and T and B4's six probe cells. The
 # file said one thing and the model was handed another, and nothing in this harness could
 # see the difference: the overlay is copied, committed and hashed identically either way.

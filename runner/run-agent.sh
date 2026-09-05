@@ -818,8 +818,10 @@ DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
 #
 # A `tools:` line is a REQUEST. The runtime resolves it, and the resolution is not the
 # identity function: on 2.1.260, `Bash` in a subagent allowlist REMOVES `Grep` and `Glob`
-# from the delivered set — 16 of 16 with `Bash` dropped both, 20 of 20 without it verbatim,
-# across 36 observations. Nothing else in this harness can see that. The overlay is copied,
+# from the delivered set — 19 of 19 with `Bash` AND a Grep/Glob present dropped both, 20 of 20
+# without `Bash` verbatim, across 45 observations. (Corrected 2026-09-05, validator pass 12 C1:
+# this comment said 16 of 16 across 36, which did not add up to its own source table. The rule
+# is unchanged and still has no exception.) Nothing else in this harness can see that. The overlay is copied,
 # committed and hashed byte-identically whether the runtime honours the line or rewrites it,
 # so every existing check reports success over a scope that excludes the only thing the
 # treatment consists of. That is this project's house failure mode, and it has now cost a
