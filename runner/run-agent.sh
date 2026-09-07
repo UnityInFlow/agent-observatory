@@ -833,7 +833,13 @@ DURATION_MS=$(( $(date +%s) * 1000 - START_MS ))
 # it declares a list to assert against.
 SCHEMA_RC=0
 SCHEMA_OUT=""
+# Did the check RUN? Distinct from "did it pass". A codex run, an interactive run and a run
+# with no agent log never reach the checker at all, and section 12b must not report a verdict
+# over a check that never happened — that is the house failure mode, and 12b is the last place
+# in this file that could commit it.
+SCHEMA_CHECKED=false
 if [[ "$RUNTIME" == "claude" && "$INTERACTIVE" != true && -f "$AGENT_LOG" ]]; then
+  SCHEMA_CHECKED=true
   mkdir -p "$INIT_SCHEMA_DIR" 2>/dev/null || true
   SCHEMA_OUT="${INIT_SCHEMA_DIR}/init-schema-${RUN_ID}.txt"
   OVERLAY_AGENT_FILE=""
@@ -1226,17 +1232,41 @@ echo "  trace search:  { resource.observatory.run.id = \"${RUN_ID}\" }"
 # Non-zero here stops a driver loop at the first bad run instead of at the twentieth. It
 # fires only when a list was actually declared — on the control arm the check records the
 # delivered set and asserts nothing, so a control can never fail this.
-if [[ -n "$AGENT_NAME" && "$SCHEMA_RC" -ne 0 ]]; then
+# AMENDED 2026-09-06. The decision used to be `SCHEMA_RC -ne 0`, which collapsed the five
+# outcomes check-init-schema.sh deliberately separates back into one. Its own header assigns
+# "VOID, redesign, do not score" to exit 5 ALONE and "Reported, never silently passed" to
+# exit 6, so the caller was stricter than the check it calls — a disagreement nothing
+# executed to reveal. It was found by biting: Lab 4B.4's orchestrator declares
+# `tools: Read, Grep, Glob, Task` and 2.1.261 delivers ["Read","Task","Grep","Glob"] on 3 of
+# 3 probes, so every run of an intact arm would have declared its own batch void.
+#
+# The table now lives in `lib/schema-verdict-policy.sh` and `verify-schema-verdict-policy.sh`
+# drives all sixteen cases, including the four that must still void and the two end-to-end
+# ones that feed the REAL checker's code to the REAL policy. EXACTLY ONE CODE MOVED: 6.
+# `Decided by Claude Opus 5 (claude-opus-5), autonomous, 2026-09-06`, disclosed as a harness
+# move in agent-learning-lab/experiments/E-007-orchestration-overhead.md.
+if [[ "$SCHEMA_CHECKED" != true ]]; then
   echo
-  echo "  !! THE DELIVERED TOOL SCHEMA IS NOT THE ONE THE OVERLAY DECLARES."
-  echo "     check-init-schema exit ${SCHEMA_RC}; see ${SCHEMA_OUT}"
-  echo "     This is decision-rule row 0a: the file is not the treatment. The run is"
-  echo "     recorded and must NOT be scored, and the batch is VOID pending a redesign."
-  exit 9
-fi
-if [[ "$SCHEMA_RC" -ne 0 ]]; then
+  echo "  schema policy: NOT RUN — no init-record check for this runtime/mode."
+  echo "  The delivered tool set is UNOBSERVED for this run: absent, not proven equal." >&2
+else
+  SCHEMA_ARM="no-agent"
+  [[ -n "$AGENT_NAME" ]] && SCHEMA_ARM="agent"
+  SCHEMA_DECISION="$("$HERE/lib/schema-verdict-policy.sh" "$SCHEMA_RC" "$SCHEMA_ARM" 2>&1)"
+  POLICY_RC=$?
   echo
-  echo "  warning: no usable init record for this run (check-init-schema exit ${SCHEMA_RC})." >&2
-  echo "  The delivered tool set is UNOBSERVED for it — absent, not proven equal." >&2
+  echo "  schema policy: ${SCHEMA_DECISION}"
+  if [[ "$POLICY_RC" -ne 0 ]]; then
+    echo "  !! THE DELIVERED TOOL SCHEMA IS NOT THE ONE THE OVERLAY DECLARES."
+    echo "     check-init-schema exit ${SCHEMA_RC}; see ${SCHEMA_OUT}"
+    echo "     This is decision-rule row 0a: the file is not the treatment. The run is"
+    echo "     recorded and must NOT be scored, and the batch is VOID pending a redesign."
+    exit 9
+  fi
+  # Recorded, never waved past: a permutation is a change in what the runtime does with the
+  # list, and the next thing it changes might not be the order.
+  [[ "$SCHEMA_RC" == "6" ]] && \
+    echo "     ORDER DIFFERS from the declared list. The SET is intact, so the arm stands;" && \
+    echo "     the verdict is on the record at ${SCHEMA_OUT} and belongs in the manifest."
 fi
 exit "$EVAL_EXIT"
