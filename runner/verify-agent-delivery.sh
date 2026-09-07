@@ -31,6 +31,9 @@
 #   G  no customization at all still passes — the control arm's path, under `set -u`
 #   H  an agent overlay AND a skill together need both switches, and say so
 #   I  the overlay is force-added into the setup commit and TRACKED, not merely copied
+#   J  an agent overlay written for ANOTHER runtime (.github/agents on claude) is refused
+#   K  a portable bundle shipping BOTH directories still runs, and says which one is inert
+#   L  .claude/agents on codex is refused too — it reads no agent directory at all
 #
 # Exit 0 every case behaved as registered · 1 the API was not reachable · 2 A CASE FAILED.
 set -uo pipefail
@@ -46,7 +49,7 @@ RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 # The count is asserted at the END against what actually ran. A total printed at the top is
 # computed before any case has executed, and this project has already shipped one that said
 # 27 while 26 ran.
-EXPECTED_CASES=9
+EXPECTED_CASES=12
 
 API_PORT="8080"
 [[ -f infra/.env ]] && API_PORT="$(sed -n 's/^API_PORT=//p' infra/.env | tail -1)"
@@ -185,6 +188,44 @@ if [[ $rc -eq 0 ]] && grep -q "tracked overlay files in the setup commit: 1 of 1
   ok "I: the agent overlay is tracked 1 of 1 by the setup commit, not merely copied"
 else
   bad "I: expected 1 of 1 tracked, got exit $rc: $(grep -E 'tracked|force-added' <<<"$out" | tr '\n' ' ')"
+fi
+
+# J — the gap this project found by being handed an overlay from outside it. A Copilot-shaped
+# bundle (.github/agents/) run on claude matched NO glob in this runner until 2026-09-07: it
+# installed, committed, tracked and hashed, and defined nothing. Same shape as the AGENTS.md
+# arm that cost twenty runs, one directory further down.
+FOREIGN_OVERLAY="$TMP/foreign-agent-dir"
+agent_file "$FOREIGN_OVERLAY/.github/agents/fixture-implementer.md" fixture-implementer
+out=$(run claude --customization "$FOREIGN_OVERLAY"); rc=$?
+if [[ $rc -eq 1 ]] && grep -q "does not read" <<<"$out" \
+   && grep -q ".github/agents/fixture-implementer.md" <<<"$out"; then
+  ok "J: a .github/agents overlay on claude is refused, and the file is named (exit 1)"
+else
+  bad "J: expected exit 1 naming the foreign file, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+fi
+
+# K — refusing a portable bundle would be wrong. When the native directory is present the
+# treatment DOES reach the model, and the foreign copy is baggage. It must still be named,
+# because an unmentioned inert file is how a reader concludes both arms were configured.
+PORTABLE_OVERLAY="$TMP/portable-agent-dirs"
+agent_file "$PORTABLE_OVERLAY/.claude/agents/fixture-implementer.md" fixture-implementer
+agent_file "$PORTABLE_OVERLAY/.github/agents/fixture-implementer.md" fixture-implementer
+out=$(run claude --customization "$PORTABLE_OVERLAY" --agent fixture-implementer); rc=$?
+if [[ $rc -eq 0 ]] && grep -q "inert, not the treatment" <<<"$out"; then
+  ok "K: an overlay carrying both directories runs, and the inert one is named"
+else
+  bad "K: expected exit 0 naming the inert directory, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+fi
+
+# L — codex dispatches no agent overlay at all, so BOTH directories are foreign there. Without
+# this case the guard would be asserted only where a native glob exists, which is the smaller
+# scope reported as the larger one.
+out=$(run codex --customization "$AGENT_OVERLAY"); rc=$?
+if [[ $rc -eq 1 ]] && grep -q "does not read" <<<"$out" \
+   && grep -q "no agent directory at all" <<<"$out"; then
+  ok "L: a .claude/agents overlay on codex is refused — it reads no agent directory"
+else
+  bad "L: expected exit 1 saying codex reads no agent directory, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
 fi
 
 echo
