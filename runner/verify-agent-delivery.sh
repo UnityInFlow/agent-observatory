@@ -34,6 +34,7 @@
 #   J  an agent overlay written for ANOTHER runtime (.github/agents on claude) is refused
 #   K  a portable bundle shipping BOTH directories still runs, and says which one is inert
 #   L  .claude/agents on codex is refused too — it reads no agent directory at all
+#   M  .github/agents on COPILOT is refused — the gap pass 18 found and halted on
 #
 # Exit 0 every case behaved as registered · 1 the API was not reachable · 2 A CASE FAILED.
 set -uo pipefail
@@ -49,7 +50,7 @@ RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 # The count is asserted at the END against what actually ran. A total printed at the top is
 # computed before any case has executed, and this project has already shipped one that said
 # 27 while 26 ran.
-EXPECTED_CASES=12
+EXPECTED_CASES=13
 
 API_PORT="8080"
 [[ -f infra/.env ]] && API_PORT="$(sed -n 's/^API_PORT=//p' infra/.env | tail -1)"
@@ -226,6 +227,19 @@ if [[ $rc -eq 1 ]] && grep -q "does not read" <<<"$out" \
   ok "L: a .claude/agents overlay on codex is refused — it reads no agent directory"
 else
   bad "L: expected exit 1 saying codex reads no agent directory, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+fi
+
+# M — the case pass 18 found by RUNNING the runtime nobody's fixture ran. Until 2026-09-07 the
+# copilot arm of the guard gave copilot a native agent directory, so a .github/agents overlay
+# there passed every check, was tracked 1 of 1, and could never be dispatched because --agent is
+# refused on copilot. A-L run claude ten times and codex twice; the verifier asserted the guard
+# exactly where it worked, which is the failure its own header names.
+out=$(run copilot --customization "$FOREIGN_OVERLAY"); rc=$?
+if [[ $rc -eq 1 ]] && grep -q "does not read" <<<"$out" \
+   && grep -q "no agent directory at all" <<<"$out"; then
+  ok "M: a .github/agents overlay on copilot is refused — it dispatches no agent either"
+else
+  bad "M: expected exit 1 refusing the copilot overlay, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
 fi
 
 echo
