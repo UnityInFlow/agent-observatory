@@ -651,6 +651,40 @@ fi
 RUN_ID="$RUN_ID" BENCHMARK_ID="$BENCHMARK_ID" VARIANT="$VARIANT" \
   source "$HERE/lib/telemetry-env.sh" "$RUNTIME"
 
+# --- 6b. and does that collector answer? -----------------------------------
+# THE LAST PLACE A LOST OVERHEAD MEASUREMENT IS STILL FREE. Below this line the model is
+# called, the run is paid for, and a collector that never answers produces a record with
+# null modelCalls, toolCalls, tokens and cost -- exit 0, criteria passed, overhead column
+# empty. That has happened to two batches (see lib/otlp-preflight.sh), both times found by
+# reading a field days later rather than by anything refusing.
+#
+# The endpoint probed is the one telemetry-env.sh just exported for THIS runtime, over the
+# protocol it exported with, so the check cannot certify a path the runtime does not use.
+# `--check-customization` exits above this: a delivery check has no telemetry to lose and
+# must not need a collector to run.
+# shellcheck source=lib/otlp-preflight.sh
+source "$HERE/lib/otlp-preflight.sh"
+otlp_preflight "${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}" "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" \
+  || die "the OTLP endpoint for '$RUNTIME' did not answer, and this run's overhead would be null.
+
+  protocol   ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  endpoint   ${OTEL_EXPORTER_OTLP_ENDPOINT:-<unset>}
+  answered   ${OTLP_PREFLIGHT_CODE:-000}
+
+  000 means nothing answered there: a closed port, a half-open forward that accepts the
+  connection and delivers nothing, or the other protocol's port on the right host. Note
+  that claude exports over gRPC and copilot/codex over http/protobuf, so the two runtimes
+  need DIFFERENT ports open, and exporting only OTLP_HTTP_PORT silently drops every claude
+  event -- that is exactly how stop 11's batch lost its telemetry.
+
+  Either bring the stack up (make up), or point the runner at the endpoints that are
+  actually listening, e.g. through this host's tunnels:
+
+    OTLP_GRPC_ENDPOINT=http://localhost:14317 OTLP_HTTP_ENDPOINT=http://localhost:14318
+
+  Refusing here is deliberate. A run that cannot be measured is cheaper to not start than
+  to discover afterwards."
+
 # --- 7/8. start the agent and wait -----------------------------------------
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 START_MS=$(( $(date +%s) * 1000 ))
