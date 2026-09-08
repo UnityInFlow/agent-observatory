@@ -452,6 +452,83 @@ $(printf '      %s\n' "$SKILL_FILES")
   #
   # Measuring that arrangement measures delegation, not a boundary — and it would do so
   # while reporting a customization hash, a clean setup commit and a green evaluator.
+  # --- and once more, for an agent overlay written for ANOTHER runtime ------
+  # The three guards above all assume the overlay was written for the runtime it is being
+  # run on. An overlay that arrives from OUTSIDE this repository need not be: Copilot reads
+  # `.github/agents/*.md` and Claude Code reads `.claude/agents/*.md`, and until 2026-09-07
+  # the check below globbed only the latter. A `.github/agents/` bundle handed to `claude`
+  # was therefore copied, committed, tracked, hashed and reported clean by every check this
+  # runner has — while defining nothing the model would ever see.
+  #
+  # That is not a new failure mode, it is the FIRST one with the directory name changed:
+  # EXP-BE002-AGENTSMD-V3 installed AGENTS.md for Claude Code and compared baseline against
+  # baseline for twenty runs. The instruction guard at section 5 was written for exactly that
+  # and covers filenames only, so it never looked inside `.github/`.
+  #
+  # Symmetric to FOREIGN_INSTRUCTIONS: a foreign directory is refused only when the native
+  # one is ABSENT, so a portable bundle shipping both still runs and the native copy is the
+  # treatment.
+  # CORRECTED 2026-09-07, before this branch was pushed. Attribution:
+  # findings/track-b-validation-2026-09-07-2.md (validator pass 18, claude-fable-5-1), §3.2,
+  # which HALTED this work under the brief's §6. The first version of this case gave copilot
+  # its own native glob (`*/.github/agents/*.md`), on the reasoning that refusing copilot
+  # overlays outright would be too strong. The validator ran it:
+  #
+  #   run-agent.sh --runtime copilot --customization <overlay with .github/agents/…> →
+  #     tracked overlay files in the setup commit: 1 of 1
+  #     run-agent: customization checks passed          exit 0
+  #
+  # No agent-overlay line, no --agent requirement, no refusal — while `--agent` is refused
+  # on copilot anyway, so nothing could ever dispatch it. That is the B4 shape reproduced on
+  # the one runtime whose native glob this block bothered to define: copied, committed,
+  # tracked, hashed, and not the treatment. The reasoning was backwards. "Repointing would
+  # make copilot overlays refuse unconditionally" describes the CORRECT behaviour — codex
+  # gets exactly that, for exactly this reason, and copilot is in the same position.
+  #
+  # Only claude has a named-agent flag here, so only claude has a native agent directory.
+  # Whether Copilot's own CLI can auto-select an agent from `.github/agents/` is not the
+  # question and was deliberately not investigated: THIS RUNNER produces no delivery proof
+  # for it either way, and an arm with no delivery proof is refused, not admitted on a guess.
+  case "$RUNTIME" in
+    claude)  NATIVE_AGENT_GLOB='*/.claude/agents/*.md'
+             FOREIGN_AGENT_GLOBS=('*/.github/agents/*.md') ;;
+    *)       # codex AND copilot: --agent is refused for both above, so neither can dispatch
+             # an overlay and BOTH directories are foreign. Nothing here can be the treatment.
+             NATIVE_AGENT_GLOB=''
+             FOREIGN_AGENT_GLOBS=('*/.claude/agents/*.md' '*/.github/agents/*.md') ;;
+  esac
+
+  NATIVE_AGENT_FILES=""
+  [[ -n "$NATIVE_AGENT_GLOB" ]] \
+    && NATIVE_AGENT_FILES=$(find "$CUSTOMIZATION_DIR" -type f -path "$NATIVE_AGENT_GLOB" 2>/dev/null | head -20)
+
+  for foreign_glob in "${FOREIGN_AGENT_GLOBS[@]}"; do
+    FOREIGN_AGENT_FILES=$(find "$CUSTOMIZATION_DIR" -type f -path "$foreign_glob" 2>/dev/null | head -20)
+    [[ -z "$FOREIGN_AGENT_FILES" ]] && continue
+    if [[ -z "$NATIVE_AGENT_FILES" ]]; then
+      # Two different remedies, because two different situations. A runtime with a native
+      # directory can be given the same overlay at the right path; a runtime with none has
+      # no path to be given, and telling the operator to "port the files to that path" when
+      # there is no such path is the sort of instruction that gets followed anyway.
+      if [[ -n "$NATIVE_AGENT_GLOB" ]]; then
+        AGENT_DIR_REMEDY="${RUNTIME} reads ${NATIVE_AGENT_GLOB}. Port the files there, and convert
+    the frontmatter with them — 'tools:' is a comma-separated string of capitalised tool
+    names on claude, not a YAML list."
+      else
+        AGENT_DIR_REMEDY="${RUNTIME} reads no agent directory at all — it has no named-agent flag
+    here, so nothing could dispatch these files even if they were installed at another path.
+    Run this overlay on claude, which does, or drop the agent files from it."
+      fi
+      die "customization installs agent files at '${foreign_glob#\*/}', which runtime
+    '${RUNTIME}' does not read. They would be copied, committed, tracked and hashed, and
+    define nothing the model ever sees — a customization hash on a second baseline.
+$(printf '      %s\n' "$FOREIGN_AGENT_FILES")
+    ${AGENT_DIR_REMEDY}"
+    fi
+    echo "  note: overlay also carries $(printf '%s\n' "$FOREIGN_AGENT_FILES" | grep -c .) file(s)" \
+         "under ${foreign_glob#\*/}, which ${RUNTIME} does not read — inert, not the treatment"
+  done
+
   AGENT_FILES=$(find "$CUSTOMIZATION_DIR" -type f -path '*/.claude/agents/*.md' 2>/dev/null | head -20)
   if [[ -n "$AGENT_FILES" ]]; then
     echo "  customization installs $(printf '%s\n' "$AGENT_FILES" | grep -c .) agent overlay file(s)"
