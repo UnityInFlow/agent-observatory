@@ -35,6 +35,17 @@
 #   K  a portable bundle shipping BOTH directories still runs, and says which one is inert
 #   L  .claude/agents on codex is refused too — it reads no agent directory at all
 #   M  .github/agents on COPILOT is refused — the gap pass 18 found and halted on
+#   N  a dispatched agent overlay records agentHash = THAT FILE, not null
+#   O  the control arm records agentHash null — the two are distinguishable in the record
+#   P  an installed skill records a non-null skillsHash
+#
+# N, O and P are about the RECORD rather than the refusal, and they are here because until
+# 2026-09-08 agentHash hashed `.github/copilot-instructions.md` and skillsHash hashed
+# `.github/skills.md` — neither of which exists in this repo, so both were null on every run
+# ever recorded, including every run whose treatment WAS an agent file. A-M prove the runner
+# refuses what it cannot deliver; N-P prove the run record can afterwards say which arm a run
+# was in. Without them arm membership rests on `--variant`, a string typed at launch, and
+# 2026-09-08 is a live demonstration of three runs typed wrong in one morning.
 #
 # Exit 0 every case behaved as registered · 1 the API was not reachable · 2 A CASE FAILED.
 set -uo pipefail
@@ -50,7 +61,7 @@ RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 # The count is asserted at the END against what actually ran. A total printed at the top is
 # computed before any case has executed, and this project has already shipped one that said
 # 27 while 26 ran.
-EXPECTED_CASES=13
+EXPECTED_CASES=16
 
 API_PORT="8080"
 [[ -f infra/.env ]] && API_PORT="$(sed -n 's/^API_PORT=//p' infra/.env | tail -1)"
@@ -240,6 +251,36 @@ if [[ $rc -eq 1 ]] && grep -q "does not read" <<<"$out" \
   ok "M: a .github/agents overlay on copilot is refused — it dispatches no agent either"
 else
   bad "M: expected exit 1 refusing the copilot overlay, got exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+fi
+
+# N — the provenance half. The overlay is delivered (case B says so); this asks whether the
+# RECORD can say so afterwards. Expected: the hash of the very file --agent dispatches.
+EXPECTED_AGENT_HASH="sha256:$(shasum -a 256 "$AGENT_OVERLAY/.claude/agents/fixture-implementer.md" | cut -c1-32)"
+out=$(run claude --customization "$AGENT_OVERLAY" --agent fixture-implementer); rc=$?
+got=$(grep -o '"agentHash":"[^"]*"' <<<"$out" | tail -1 | cut -d'"' -f4)
+if [[ $rc -eq 0 && "$got" == "$EXPECTED_AGENT_HASH" ]]; then
+  ok "N: a dispatched agent overlay records agentHash of the file it dispatches"
+else
+  bad "N: expected agentHash ${EXPECTED_AGENT_HASH}, got '${got}' (exit $rc)"
+fi
+
+# O — the other side of N, and the one that makes N mean anything. A hash that is non-null on
+# BOTH arms distinguishes nothing. The control arm installs no overlay and must record null.
+out=$(run claude); rc=$?
+if [[ $rc -eq 0 ]] && grep -q '"agentHash":null' <<<"$out"; then
+  ok "O: the control arm records agentHash null — the arms are distinguishable in the record"
+else
+  bad "O: expected agentHash null on a run with no customization, got exit $rc: $(grep -o 'customization hashes: .*' <<<"$out" | head -1)"
+fi
+
+# P — skills had the same defect and the same fix. Hashed as a SET over sorted (path, content)
+# pairs, since a skill has no single path; the assertion is only that an installed skill is no
+# longer invisible in the record.
+out=$(run claude --customization "$BOTH_OVERLAY" --agent fixture-implementer --enable-skills); rc=$?
+if [[ $rc -eq 0 ]] && grep -q '"skillsHash":"sha256:' <<<"$out"; then
+  ok "P: an installed skill records a non-null skillsHash"
+else
+  bad "P: expected a non-null skillsHash, got exit $rc: $(grep -o 'customization hashes: .*' <<<"$out" | head -1)"
 fi
 
 echo
