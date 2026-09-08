@@ -569,18 +569,6 @@ if [[ -n "$AGENT_NAME" && -z "$CUSTOMIZATION_DIR" ]]; then
     something this run does not control and cannot hash."
 fi
 
-if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
-  # Report what the setup commit actually TRACKS, not what was copied. "The file is in the
-  # worktree" is the claim that cost this project twenty runs in Phase 1; `git ls-files` is
-  # the claim that means something.
-  if [[ -n "$CUSTOMIZATION_DIR" && ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
-    TRACKED=$(git -C "$WORKTREE" ls-files -- "${OVERLAY_PATHS[@]}" | grep -c . || true)
-    echo "  tracked overlay files in the setup commit: ${TRACKED} of ${#OVERLAY_PATHS[@]}"
-  fi
-  echo "run-agent: customization checks passed"
-  exit 0
-fi
-
 hash_of() {
   local path="$WORKTREE/$1"
   [[ -f "$path" ]] || { echo "null"; return; }
@@ -591,21 +579,111 @@ hash_of() {
 # for a file the model never opened, and that hash was then cited as evidence the treatment
 # was applied consistently. A hash of the wrong file is worse than no hash: it is a
 # provenance claim about something that had no effect.
+#
+# CORRECTED 2026-09-08, and the correction is that the rule above was applied to ONE of the
+# three hashes and to neither of the two beside it. skillsHash hashed `.github/skills.md` and
+# agentHash hashed `.github/copilot-instructions.md` -- a Copilot INSTRUCTIONS file, which is
+# not an agent file for any runtime. Neither path has ever existed in the benchmarks repo, so
+# BOTH have been null on every run this project has recorded, INCLUDING every run whose
+# treatment IS an agent file. That is the paragraph above happening to the two lines under it.
+#
+# What it cost: arm membership in the run record rested entirely on `--variant`, a string
+# typed at launch. On 2026-09-08 three runs were typed wrong on the same day the overlay they
+# carried was proven delivered, and no field in any record could catch it. Under B5 -- two
+# tasks, two arms, a checker that scores a mislabelled control as "no phases observed" -- that
+# is an effect shrinking toward null with nothing in the record to explain why.
+#
+# Found by validator passes 20 and 21 (claude-fable-5-1) out of agent-learning-lab's
+# evidence/b05-preflight, which named it the single finding most likely to overturn the
+# track's result. Fixed before the first B5 batch rather than after it.
 case "$RUNTIME" in
   claude)  RUNTIME_INSTRUCTIONS="CLAUDE.md" ;;
   copilot|codex) RUNTIME_INSTRUCTIONS="AGENTS.md" ;;
   *)       RUNTIME_INSTRUCTIONS="AGENTS.md" ;;
 esac
+# The agent file this run DISPATCHES, by the same rule. Only claude has a named-agent flag and
+# a native agent directory here, so on every other runtime `null` is the TRUE answer and not an
+# accident: there is nothing an agent file could be read by. Without --agent nothing is
+# dispatched even on claude -- and section 5 already refuses an agent overlay that passes no
+# --agent, so a null here on a claude run means the run defined no agent boundary at all.
+AGENT_FILE_REL=""
+if [[ "$RUNTIME" == "claude" && -n "$AGENT_NAME" ]]; then
+  AGENT_FILE_REL=".claude/agents/${AGENT_NAME}.md"
+fi
+# Skills have no single path, so hash the SET: every SKILL.md in the worktree, as one digest
+# over the sorted (path, content) pairs. Sorted so the value does not depend on find order;
+# path included so a renamed skill is a difference rather than a collision.
+skills_hash() {
+  local files
+  files=$(cd "$WORKTREE" && find . -type f -name SKILL.md 2>/dev/null | LC_ALL=C sort)
+  [[ -n "$files" ]] || { echo "null"; return; }
+  printf '"sha256:%s"' "$( (cd "$WORKTREE" && while IFS= read -r f; do
+        printf '%s\n' "$f"
+        shasum -a 256 "$f" | cut -d' ' -f1
+      done <<<"$files") | shasum -a 256 | cut -c1-32)"
+}
 CUSTOMIZATION=$(jq -nc \
   --argjson instructions "$(hash_of "$RUNTIME_INSTRUCTIONS")" \
-  --argjson skills "$(hash_of .github/skills.md)" \
-  --argjson agent "$(hash_of .github/copilot-instructions.md)" \
+  --argjson skills "$(skills_hash)" \
+  --argjson agent "$([[ -n "$AGENT_FILE_REL" ]] && hash_of "$AGENT_FILE_REL" || echo null)" \
   '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent}')
+
+if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
+  # Report what the setup commit actually TRACKS, not what was copied. "The file is in the
+  # worktree" is the claim that cost this project twenty runs in Phase 1; `git ls-files` is
+  # the claim that means something.
+  if [[ -n "$CUSTOMIZATION_DIR" && ${#OVERLAY_PATHS[@]} -gt 0 ]]; then
+    TRACKED=$(git -C "$WORKTREE" ls-files -- "${OVERLAY_PATHS[@]}" | grep -c . || true)
+    echo "  tracked overlay files in the setup commit: ${TRACKED} of ${#OVERLAY_PATHS[@]}"
+  fi
+  # The hashes are computed ABOVE this exit, not below it, and printed here. Before today they
+  # were computed after it, so the only way to see one was a real benchmark run and a real
+  # model call -- which is why two of the three could name files that do not exist for years
+  # without anyone noticing. A provenance field that cannot be read without spending a run is
+  # not a field anyone checks.
+  echo "  customization hashes: ${CUSTOMIZATION}"
+  echo "run-agent: customization checks passed"
+  exit 0
+fi
 
 # --- 6. OTel correlation ---------------------------------------------------
 # shellcheck source=/dev/null
 RUN_ID="$RUN_ID" BENCHMARK_ID="$BENCHMARK_ID" VARIANT="$VARIANT" \
   source "$HERE/lib/telemetry-env.sh" "$RUNTIME"
+
+# --- 6b. and does that collector answer? -----------------------------------
+# THE LAST PLACE A LOST OVERHEAD MEASUREMENT IS STILL FREE. Below this line the model is
+# called, the run is paid for, and a collector that never answers produces a record with
+# null modelCalls, toolCalls, tokens and cost -- exit 0, criteria passed, overhead column
+# empty. That has happened to two batches (see lib/otlp-preflight.sh), both times found by
+# reading a field days later rather than by anything refusing.
+#
+# The endpoint probed is the one telemetry-env.sh just exported for THIS runtime, over the
+# protocol it exported with, so the check cannot certify a path the runtime does not use.
+# `--check-customization` exits above this: a delivery check has no telemetry to lose and
+# must not need a collector to run.
+# shellcheck source=lib/otlp-preflight.sh
+source "$HERE/lib/otlp-preflight.sh"
+otlp_preflight "${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}" "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" \
+  || die "the OTLP endpoint for '$RUNTIME' did not answer, and this run's overhead would be null.
+
+  protocol   ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  endpoint   ${OTEL_EXPORTER_OTLP_ENDPOINT:-<unset>}
+  answered   ${OTLP_PREFLIGHT_CODE:-000}
+
+  000 means nothing answered there: a closed port, a half-open forward that accepts the
+  connection and delivers nothing, or the other protocol's port on the right host. Note
+  that claude exports over gRPC and copilot/codex over http/protobuf, so the two runtimes
+  need DIFFERENT ports open, and exporting only OTLP_HTTP_PORT silently drops every claude
+  event -- that is exactly how stop 11's batch lost its telemetry.
+
+  Either bring the stack up (make up), or point the runner at the endpoints that are
+  actually listening, e.g. through this host's tunnels:
+
+    OTLP_GRPC_ENDPOINT=http://localhost:14317 OTLP_HTTP_ENDPOINT=http://localhost:14318
+
+  Refusing here is deliberate. A run that cannot be measured is cheaper to not start than
+  to discover afterwards."
 
 # --- 7/8. start the agent and wait -----------------------------------------
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
