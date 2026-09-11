@@ -51,6 +51,13 @@ jobs:
       # should not need one." If that ever stops being true, this step is where it shows.
       - name: Run analysis tests
         run: python3 -m unittest discover -s runner -p 'test_*.py' -v
+      # A fixture set nobody executes is L3 — words a human chooses to run. The layer
+      # table in phases/05b-verification-selfhealing/README.md calls this verifier L2
+      # "because it executes in CI and fails the build", and until this step existed that
+      # sentence was false: NO runner/verify-*.sh ran in CI. It needs only bash and jq, both
+      # preinstalled on ubuntu-latest — no codex, no model call, no network.
+      - name: The permission-block classifier refuses what it must
+        run: ./runner/verify-permission-block-classifier.sh
 
   web:
     name: web — type-check and build
