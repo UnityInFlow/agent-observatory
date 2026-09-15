@@ -53,7 +53,7 @@ beh() { # beh <denials> <toolCalls> -> the .behavior shape both the live telemet
     "$2" "$2" "$1"
 }
 
-echo "verify-permission-block-classifier: 40 cases"
+echo "verify-permission-block-classifier: 39 cases"
 
 echo "  -- the thing this classifier is FOR: a denial signal AND nothing produced --"
 check "1 denial, 0 changed files is a block"            "$(beh 1 12)"  0  2 "permission block: 1 denial(s) and 0 changed files"
@@ -112,13 +112,16 @@ check "overflowing changed count is refused"             "$(beh 1 12)" "92233720
 # in-range count must still be classified, not swept up by the new pattern.
 check "  0 denials is still a number, not a refusal"     "$(beh 0 12)"  1  0 "0 denials and 1 changed file(s)"
 check "  a large in-range denial count still blocks"     '{"behavior":{"permissionDenials":9007199254740991,"toolCalls":12}}' 0 2 "permission block"
-# Found by this fixture failing on its first run, and kept as a case rather than tuned away:
-# `jq -r` renders a JSON number above 2^53 in SCIENTIFIC NOTATION — 999999999999999999 comes
-# back as `1e+18` — so the value this script sees is not the value the record holds. It is
-# refused, which is the right answer for an input the script cannot reason about, but the
-# refusal is jq's precision ceiling and not the pattern's bound. Asserted so a later reader
-# does not "fix" the pattern to admit it.
-check "  a jq-scientific-notation count is refused"      '{"behavior":{"permissionDenials":999999999999999999,"toolCalls":12}}' 0 3 "is not a number"
+# NOT ASSERTED, AND THE REASON IS THE POINT. This fixture existed for one CI run and was
+# removed, because it tested jq and not this script. `jq -r` on a JSON number above 2^53 is
+# VERSION-DEPENDENT: jq-1.6 renders 999999999999999999 as `1e+18`, which this script refuses
+# at exit 3; jq-1.7 renders it exactly, which this script classifies as a block at exit 2.
+# Same record, same script, two answers, decided by the jq on the machine — observed locally
+# (1.6, exit 3) and in CI (1.7, exit 2) on the same commit. It is left unasserted because a
+# fixture that pins it would make this suite fail on a different jq, and because no value
+# here has ever exceeded 15. Recorded rather than dropped: if a count above 2^53 can ever
+# reach this script, its classification is not reproducible across environments, and that is
+# a defect in the input pipeline rather than in the rule.
 
 echo "  -- usage --"
 checkargs "no arguments"   1 "usage:"
