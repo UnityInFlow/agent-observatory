@@ -72,8 +72,17 @@ if [[ "$DENIALS" == "MISSING" ]]; then
   echo "behavior.permissionDenials is absent — permission block could not be classified (absent is not zero)"
   exit 3
 fi
-if ! [[ "$DENIALS" =~ ^[0-9]+$ ]]; then
-  echo "behavior.permissionDenials is not a number (${DENIALS}) — permission block could not be classified"
+# The pattern is a CANONICAL decimal integer, not `^[0-9]+$`, and the difference is a
+# measured defect rather than a preference. `^[0-9]+$` admits "08", which bash arithmetic
+# reads as an invalid octal constant: `[[ "08" -gt 0 ]]` errors to stderr and evaluates
+# FALSE, so a run with eight refusals and no output was reported "nothing was refused" at
+# exit 0. It also admits 9223372036854775808, which overflows signed 64-bit arithmetic
+# silently — no error at all, same wrong answer. Both were reproduced against this file at
+# sha 84e860f76f23 before this change. A value outside the decidable range is REFUSED here,
+# never coerced, for the same reason the changed-file count below is: a guard that clears an
+# input it cannot evaluate is worse than one that has no opinion.
+if ! [[ "$DENIALS" =~ ^(0|[1-9][0-9]{0,17})$ ]]; then
+  echo "behavior.permissionDenials is not a number in canonical decimal range (${DENIALS}) — permission block could not be classified"
   exit 3
 fi
 # The changed-file count comes from the caller rather than from this JSON, because the
@@ -81,8 +90,8 @@ fi
 # passes `jq '.result.changedFiles | length'`. One code path, and the caller says what it
 # counted. A count that is not a number is refused, never coerced to 0: coercing it would
 # satisfy the second conjunct and make this guard fire on runs that produced work.
-if ! [[ "$CHANGED" =~ ^[0-9]+$ ]]; then
-  echo "changed-file count is not a number (${CHANGED}) — permission block could not be classified"
+if ! [[ "$CHANGED" =~ ^(0|[1-9][0-9]{0,17})$ ]]; then
+  echo "changed-file count is not a number in canonical decimal range (${CHANGED}) — permission block could not be classified"
   exit 3
 fi
 

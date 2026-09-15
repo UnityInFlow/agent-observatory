@@ -53,7 +53,7 @@ beh() { # beh <denials> <toolCalls> -> the .behavior shape both the live telemet
     "$2" "$2" "$1"
 }
 
-echo "verify-permission-block-classifier: 29 cases"
+echo "verify-permission-block-classifier: 40 cases"
 
 echo "  -- the thing this classifier is FOR: a denial signal AND nothing produced --"
 check "1 denial, 0 changed files is a block"            "$(beh 1 12)"  0  2 "permission block: 1 denial(s) and 0 changed files"
@@ -78,6 +78,9 @@ check "4d0246d7 F05 d=0 tc=12 ch=1 stays unclassified"  "$(beh 0 12)"  1  0 "0 d
 check "ca952174 F05 d=0 tc=12 ch=1"                     "$(beh 0 12)"  1  0 "not a permission block"
 check "344274bf F05 d=0 tc=11 ch=1"                     "$(beh 0 11)"  1  0 "not a permission block"
 check "b32a4396 F05 d=0 tc=18 ch=1"                     "$(beh 0 18)"  1  0 "not a permission block"
+check "6b19bafb F05 d=0 tc=11 ch=1"                     "$(beh 0 11)"  1  0 "not a permission block"
+check "1a0b375e F05 d=0 tc=12 ch=1"                     "$(beh 0 12)"  1  0 "not a permission block"
+check "5b576f59 F05 d=0 tc=11 ch=1"                     "$(beh 0 11)"  1  0 "not a permission block"
 
 echo "  -- an empty result with NO denial is somebody else's case, not this one --"
 # The existing pre-evaluator guard (run-agent.sh:1203) owns PRODUCED_NOTHING && toolCalls == 0.
@@ -95,6 +98,27 @@ check "  and an absent behavior block is refused too"    '{"efficiency":{"inputT
 check "non-numeric permissionDenials is refused"         '{"behavior":{"permissionDenials":"some"}}' 0 3 "is not a number"
 check "non-numeric changed count is refused, not coerced" "$(beh 1 12)" "lots" 3 "changed-file count is not a number"
 check "  an empty changed count is refused, not 0"       "$(beh 1 12)" ""     3 "changed-file count is not a number"
+
+echo "  -- the numeric DOMAIN, because \`^[0-9]+\$\` is not the same set as \"a number\" --"
+# Found by the §4a review of this file at sha 84e860f76f23 and REPRODUCED before it was
+# fixed. Under the old pattern each of the next four cases exited 0 with a reason string
+# that said the opposite of the truth; none of them errored out of the script.
+check "leading-zero denials 08 is refused, not cleared"  '{"behavior":{"permissionDenials":"08","toolCalls":12}}' 0 3 "is not a number"
+check "  09 too — the octal trap is 8 and 9, not 7"     '{"behavior":{"permissionDenials":"09","toolCalls":12}}' 0 3 "is not a number"
+check "overflowing denials is refused, not cleared"      '{"behavior":{"permissionDenials":"9223372036854775808","toolCalls":12}}' 0 3 "is not a number"
+check "leading-zero changed count is refused"            "$(beh 1 12)" "08"  3 "changed-file count is not a number"
+check "overflowing changed count is refused"             "$(beh 1 12)" "9223372036854775808" 3 "changed-file count is not a number"
+# The two guards below exist so the fix cannot be over-tight: a legitimate 0 and a large
+# in-range count must still be classified, not swept up by the new pattern.
+check "  0 denials is still a number, not a refusal"     "$(beh 0 12)"  1  0 "0 denials and 1 changed file(s)"
+check "  a large in-range denial count still blocks"     '{"behavior":{"permissionDenials":9007199254740991,"toolCalls":12}}' 0 2 "permission block"
+# Found by this fixture failing on its first run, and kept as a case rather than tuned away:
+# `jq -r` renders a JSON number above 2^53 in SCIENTIFIC NOTATION — 999999999999999999 comes
+# back as `1e+18` — so the value this script sees is not the value the record holds. It is
+# refused, which is the right answer for an input the script cannot reason about, but the
+# refusal is jq's precision ceiling and not the pattern's bound. Asserted so a later reader
+# does not "fix" the pattern to admit it.
+check "  a jq-scientific-notation count is refused"      '{"behavior":{"permissionDenials":999999999999999999,"toolCalls":12}}' 0 3 "is not a number"
 
 echo "  -- usage --"
 checkargs "no arguments"   1 "usage:"
