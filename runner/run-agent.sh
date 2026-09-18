@@ -668,7 +668,7 @@ otlp_preflight "${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}" "${OTEL_EXPORTER_
   || die "the OTLP endpoint for '$RUNTIME' did not answer, and this run's overhead would be null.
 
   protocol   ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
-  endpoint   ${OTEL_EXPORTER_OTLP_ENDPOINT:-<unset>}
+  endpoint   ${OTEL_EXPORTER_OTLP_ENDPOINT:-<unset>}   (OTEL_EXPORTER_OTLP_ENDPOINT)
   answered   ${OTLP_PREFLIGHT_CODE:-000}
 
   000 means nothing answered there: a closed port, a half-open forward that accepts the

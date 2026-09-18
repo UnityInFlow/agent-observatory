@@ -58,6 +58,13 @@ jobs:
       # preinstalled on ubuntu-latest — no codex, no model call, no network.
       - name: The permission-block classifier refuses what it must
         run: ./runner/verify-permission-block-classifier.sh
+      # The refusal half of the OTLP preflight: an empty endpoint and a closed 127.0.0.1 port,
+      # both protocols. Needs only bash and curl — no collector, no model call. The second
+      # line proves the verifier can fail: pointed at a library that admits everything, it must.
+      - name: The runner refuses an OTLP endpoint that does not answer
+        run: |
+          ./runner/verify-otlp-endpoint-refusal.sh
+          ! OTLP_PREFLIGHT_LIB=runner/fixtures/otlp-preflight-always-admits.sh ./runner/verify-otlp-endpoint-refusal.sh
 
   web:
     name: web — type-check and build
