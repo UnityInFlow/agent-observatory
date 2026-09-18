@@ -65,6 +65,14 @@ jobs:
         run: |
           ./runner/verify-otlp-endpoint-refusal.sh
           ! OTLP_PREFLIGHT_LIB=runner/fixtures/otlp-preflight-always-admits.sh ./runner/verify-otlp-endpoint-refusal.sh
+      # Two more fixture sets that were L3 until they ran here: the init-record schema check
+      # (a tools: file is not the treatment until its init record says so) and the skill
+      # contamination guard (which once excluded the treatment arm). Bash and jq only — no
+      # model call, no network.
+      - name: The init-record schema check refuses what it must
+        run: ./runner/verify-init-schema-check.sh
+      - name: The skill contamination guard admits the treatment and refuses the rest
+        run: ./runner/verify-skill-contamination.sh
 
   web:
     name: web — type-check and build
