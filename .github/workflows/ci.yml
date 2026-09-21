@@ -38,6 +38,24 @@ jobs:
       - name: The review hook behaves
         run: ./.claude/hooks/opencode-review.test.sh
 
+  shellcheck:
+    name: shell — ShellCheck finds no errors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Severity is `error`, not `warning`: the four warnings found locally on 2026-09-21 (three SC2034, one SC2053) sit in runner/ and hook files this step does not edit, and raising the severity is the author's call.
+      - name: ShellCheck the runner
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./runner
+          severity: error
+      - name: ShellCheck the hooks
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./.claude/hooks
+          severity: error
+
   runner:
     name: runner — the statistics that decide a verdict
     runs-on: ubuntu-latest
