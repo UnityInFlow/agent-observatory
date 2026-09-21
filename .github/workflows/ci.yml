@@ -74,6 +74,28 @@ jobs:
       - name: The skill contamination guard admits the treatment and refuses the rest
         run: ./runner/verify-skill-contamination.sh
 
+  policy:
+    name: runner — the schema-verdict policy still refuses
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Its own job rather than a step of `runner`: this fixture set reads two tracked files
+    # under ../agent-learning-lab, and actions/checkout cannot write outside the workspace,
+    # so both repositories are checked out side by side underneath it. Bash and jq only,
+    # both preinstalled — no model call, no docker, no network beyond the two checkouts.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: agent-observatory
+      # The sibling is checked out at `main`, which moves: a lab commit can turn this job red.
+      - uses: actions/checkout@v7
+        with:
+          repository: UnityInFlow/agent-learning-lab
+          ref: main
+          path: agent-learning-lab
+      - name: The schema-verdict policy refuses what it must
+        run: bash runner/verify-schema-verdict-policy.sh
+        working-directory: agent-observatory
+
   web:
     name: web — type-check and build
     runs-on: ubuntu-latest
