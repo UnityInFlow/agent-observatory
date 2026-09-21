@@ -46,12 +46,12 @@ jobs:
       - uses: actions/checkout@v7
       # Severity is `error`, not `warning`: the four warnings found locally on 2026-09-21 (three SC2034, one SC2053) sit in runner/ and hook files this step does not edit, and raising the severity is the author's call.
       - name: ShellCheck the runner
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master as of 2026-09-21, pinned
         with:
           scandir: ./runner
           severity: error
       - name: ShellCheck the hooks
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master as of 2026-09-21, pinned
         with:
           scandir: ./.claude/hooks
           severity: error
