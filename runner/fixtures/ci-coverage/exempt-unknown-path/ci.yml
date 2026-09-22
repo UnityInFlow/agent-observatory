@@ -1,0 +1,5 @@
+jobs:
+  runner:
+    steps:
+      - name: verify-alpha.sh
+        run: ./runner/verify-alpha.sh

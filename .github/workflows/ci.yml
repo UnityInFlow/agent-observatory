@@ -91,6 +91,13 @@ jobs:
         run: ./runner/verify-init-schema-check.sh
       - name: The skill contamination guard admits the treatment and refuses the rest
         run: ./runner/verify-skill-contamination.sh
+      # The comparison the steps above never made: every tracked check script — verify-*.sh,
+      # smoke-test.sh, send-test-trace.sh — is either named in this file or has a row in
+      # runner/ci-exempt.tsv naming the live thing it needs. Six were L3 for months because
+      # nothing held the two sets against each other. Needs bash and git only; the fixtures
+      # under runner/fixtures/ci-coverage/ drive the same code path to prove it refuses.
+      - name: Every check script is run by CI or exempt for a named reason
+        run: ./runner/verify-ci-coverage.sh
 
   policy:
     name: runner — the schema-verdict policy still refuses

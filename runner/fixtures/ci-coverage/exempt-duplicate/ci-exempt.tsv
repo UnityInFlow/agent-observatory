@@ -1,0 +1,4 @@
+# Fixture exempt table. Every path below is invented on purpose: no fixture names a
+# real script, so a fixture can never be mistaken for a claim about this repository.
+runner/verify-beta.sh	a live model, which a hosted runner cannot reach
+runner/verify-beta.sh	the same script, claimed a second time
