@@ -66,11 +66,21 @@ EXPECTED_CASES=8
 check_coverage() {
   local pop="$1" workflow="$2" exempt="$3"
   local line path reason lineno=0 offenders=0
-  local ex_paths=""
+  local ex_paths="" pop_paths=""
 
   [[ -r "$pop" ]]      || { echo "verify-ci-coverage: cannot read population file $pop" >&2; return 2; }
   [[ -r "$workflow" ]] || { echo "verify-ci-coverage: cannot read workflow file $workflow" >&2; return 2; }
   [[ -r "$exempt" ]]   || { echo "verify-ci-coverage: cannot read exempt table $exempt" >&2; return 2; }
+
+  # Membership is tested with bash pattern matching against these newline-delimited lists,
+  # NOT with `printf ... | grep -Fxq`. Under `set -o pipefail` that pipeline reports failure
+  # whenever grep -q exits on the first match before printf has finished writing, which is a
+  # race: it answered "not present" for a different exempt row on each run, and the first
+  # version of this script passed and then failed with nothing changed in between.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    pop_paths="$pop_paths$line"$'\n'
+  done < "$pop"
 
   # Pass 1 — the exempt table. Every row is checked before anything is exempted by it, so a
   # malformed table cannot quietly cover a script.
@@ -90,12 +100,12 @@ check_coverage() {
       echo "  $exempt:$lineno exempts $path for no stated reason"
       offenders=$((offenders + 1))
     fi
-    if printf '%s\n' "$ex_paths" | grep -Fxq -- "$path"; then
+    if [[ $'\n'"$ex_paths" == *$'\n'"$path"$'\n'* ]]; then
       echo "  $exempt:$lineno lists $path a second time"
       offenders=$((offenders + 1))
       continue
     fi
-    if ! printf '%s\n' "$(grep -v '^[[:space:]]*$' "$pop")" | grep -Fxq -- "$path"; then
+    if [[ $'\n'"$pop_paths" != *$'\n'"$path"$'\n'* ]]; then
       echo "  $exempt:$lineno exempts $path, which is not a tracked check script"
       offenders=$((offenders + 1))
     elif grep -Fq -- "$path" "$workflow"; then
@@ -110,7 +120,7 @@ check_coverage() {
   while IFS= read -r path || [[ -n "$path" ]]; do
     [[ -z "${path//[[:space:]]/}" ]] && continue
     grep -Fq -- "$path" "$workflow" && continue
-    printf '%s\n' "$ex_paths" | grep -Fxq -- "$path" && continue
+    [[ $'\n'"$ex_paths" == *$'\n'"$path"$'\n'* ]] && continue
     echo "  $path is run by neither $workflow nor exempted in $exempt"
     offenders=$((offenders + 1))
   done < "$pop"
