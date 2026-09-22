@@ -73,7 +73,7 @@ git -C "$FIXTURE" update-ref refs/remotes/origin/main refs/heads/main
 # mis-edited heredoc, a block that drifts out of the flow — otherwise vanishes in silence:
 # the tail prints a smaller "all N cases" and still exits 0, which reads exactly like a pass.
 # This constant is the only thing in the file that notices a case went missing.
-EXPECTED_CASES=27
+EXPECTED_CASES=29
 PASS=0; FAIL=0
 run() {  # run <name> <stdin-json> <expect-exit> <expect-calls> [env=val ...]
   local name="$1" payload="$2" want_exit="$3" want_calls="$4"; shift 4
@@ -225,6 +225,61 @@ if [ "$got" = 0 ] && printf '%s' "$out" | grep -q 'not installed'; then
   printf 'ok    %-46s exit 0, skipped with a reason\n' "opencode not installed"; PASS=$((PASS+1))
 else
   printf 'FAIL  %-46s exit %s, out: %s\n' "opencode not installed" "$got" "$out"; FAIL=$((FAIL+1))
+fi
+
+# --- a review glob that matches nothing is a dead glob, not a clean repository
+#
+# A glob whose directory was renamed, or which carries a typo, selects nothing. The hook then
+# exits 0 with "no review-scoped files in the diff" — the exact line a genuinely unreviewable
+# diff produces — so a hole in the review scope and a clean pass are indistinguishable from
+# the outside. Nothing else in this suite notices: every other case supplies its own files, so
+# a dead glob sitting beside four live ones changes no count, no verdict and no message.
+#
+# The entries are read OUT OF THE HOOK, never restated here, so the two cannot drift: a glob
+# added to the hook is checked by this case on the next run without anyone remembering to.
+TRACKED="$TMP/tracked"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+git -C "$REPO_ROOT" ls-files > "$TRACKED" 2>/dev/null
+
+glob_coverage_failures() {  # <glob>... -> prints every glob matching no tracked file
+  local glob f matched
+  for glob in "$@"; do
+    matched=0
+    while IFS= read -r f; do
+      # shellcheck disable=SC2053 # unquoted RHS is a deliberate glob match, as in the hook
+      if [[ "$f" == $glob ]]; then matched=1; break; fi
+    done < "$TRACKED"
+    [ "$matched" = 1 ] || printf '%s\n' "$glob"
+  done
+}
+
+# The sentinel survives only if the extraction below fails; an unread array would otherwise
+# make the next case pass over nothing at all.
+REVIEW_GLOBS=('REVIEW_GLOBS-was-not-extracted-from-the-hook')
+eval "$(awk '/^REVIEW_GLOBS=\(/,/^\)/' "$HOOK")"
+
+GLOB_COUNT=${#REVIEW_GLOBS[@]}
+dead_globs="$(glob_coverage_failures "${REVIEW_GLOBS[@]}")"
+if [ "$GLOB_COUNT" -ge 4 ] && [ -z "$dead_globs" ]; then
+  printf 'ok    %-46s %s globs, each matching a tracked file\n' "every review glob is live" "$GLOB_COUNT"
+  PASS=$((PASS+1))
+else
+  printf 'FAIL  %-46s %s entries read, dead glob(s): %s\n' \
+    "every review glob is live" "$GLOB_COUNT" "${dead_globs:-none}"
+  FAIL=$((FAIL+1))
+fi
+
+# The refusal, run rather than described: the same check over the same entries plus one
+# deliberately dead glob must name that glob and nothing else.
+DEAD='runner/renamed-away/*.sh'
+injected_dead="$(glob_coverage_failures "${REVIEW_GLOBS[@]}" "$DEAD")"
+if [ "$injected_dead" = "$DEAD" ]; then
+  printf 'ok    %-46s the dead entry is named\n' "a dead glob is caught"
+  PASS=$((PASS+1))
+else
+  printf 'FAIL  %-46s reported: %s (want exactly %s)\n' \
+    "a dead glob is caught" "${injected_dead:-nothing}" "$DEAD"
+  FAIL=$((FAIL+1))
 fi
 
 echo
