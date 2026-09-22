@@ -18,6 +18,7 @@
 # `buildPassed` and `testsPassed` have no defaults on either side: the schema requires
 # them, so an evaluation missing them should be rejected.
 
+# shellcheck disable=SC2034 # read by runner/run-agent.sh and runner/evaluate.sh, which source this file
 EVALUATION_PAYLOAD_FILTER='{
   evaluatorVersion,
   completedAt,

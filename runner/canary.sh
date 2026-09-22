@@ -24,6 +24,7 @@
 #   2   the run could not be made at all (missing runtime, no API, bad arguments)
 
 set -uo pipefail
+# shellcheck disable=SC2034 # HERE is assigned and never used; kept as-is, no executable line changes
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RUNTIME="${RUNTIME:-claude}"

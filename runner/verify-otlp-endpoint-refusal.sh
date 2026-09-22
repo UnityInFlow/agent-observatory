@@ -28,6 +28,7 @@ LIB="${OTLP_PREFLIGHT_LIB:-runner/lib/otlp-preflight.sh}"
 RUNNER="$ROOT/runner/run-agent.sh"
 
 [[ -r "$LIB" ]] || { echo "verify-otlp-endpoint-refusal: cannot read library $LIB" >&2; exit 1; }
+# shellcheck disable=SC2034 # read by the sourced runner/lib/otlp-preflight.sh
 OTLP_PREFLIGHT_TIMEOUT=2
 # shellcheck source=lib/otlp-preflight.sh
 source "$LIB"
