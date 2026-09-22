@@ -93,6 +93,7 @@ ranked=()
 while IFS= read -r f; do
   [ -f "$f" ] || continue          # a deleted file has nothing to review
   for glob in "${REVIEW_GLOBS[@]}"; do
+    # shellcheck disable=SC2053 # unquoted RHS is a deliberate glob match against REVIEW_GLOBS
     if [[ "$f" == $glob ]]; then ranked+=("$f"); break; fi
   done
 done <<< "$changed"
