@@ -1,0 +1,22 @@
+# Check scripts that CI does not run, and the live thing each one needs.
+#
+# Format: <path><TAB><the live thing it needs>. Comment lines start with '#'. Blank lines
+# are not allowed — runner/verify-ci-coverage.sh reads every non-comment line as a row.
+#
+# A row here is a claim that the script cannot run on a GitHub-hosted runner, not a claim
+# that it does not matter. Each reason below was read out of the script's own header on
+# 2026-09-22; none of them was written to make the verifier pass. If one of these ever
+# becomes runnable offline, delete its row and add the CI step — the verifier then requires
+# exactly that, because a path may not be both exempt and referenced in ci.yml.
+#
+# The population this file belongs to is the tracked CHECK SCRIPTS only: runner/verify-*.sh,
+# runner/smoke-test.sh and runner/send-test-trace.sh. Never add a row for run-agent.sh,
+# evaluate.sh, seed-demo.sh, backfill-telemetry.sh, canary.sh, a sourced library or a
+# fixture stub — the verifier says nothing about them, so a row would assert more than
+# anything checks.
+runner/verify-agent-delivery.sh	a live claude model: it drives run-agent.sh and reads the init record to see which agent the runtime actually delivered
+runner/verify-skill-delivery.sh	a live claude model: it drives run-agent.sh twice and reads the transcript for a skill activation
+runner/verify-codex-isolation.sh	the codex CLI, its credentials and this operator's real CODEX_HOME, none of which exist on a hosted runner
+runner/verify-otlp-preflight.sh	a live OTLP endpoint that answers, plus a real runner worktree for its last case; the offline half is already proved by the endpoint-refusal verifier
+runner/smoke-test.sh	the whole running stack on this machine: api, web, Grafana, Prometheus, Tempo and the collector
+runner/send-test-trace.sh	a running OTLP collector to post a span to and a running Tempo to read it back from

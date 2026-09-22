@@ -1,0 +1,3 @@
+runner/verify-alpha.sh
+runner/verify-beta.sh
+runner/verify-gamma.sh

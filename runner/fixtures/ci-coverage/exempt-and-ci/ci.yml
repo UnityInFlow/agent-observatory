@@ -1,0 +1,7 @@
+jobs:
+  runner:
+    steps:
+      - name: verify-alpha.sh
+        run: ./runner/verify-alpha.sh
+      - name: verify-beta.sh
+        run: ./runner/verify-beta.sh
