@@ -69,6 +69,11 @@ git -C "$FIXTURE" branch -M main
 # `origin/main` without a remote: the hook only ever asks for a merge-base.
 git -C "$FIXTURE" update-ref refs/remotes/origin/main refs/heads/main
 
+# Every case below must be counted here. A case that stops running — an early exit, a
+# mis-edited heredoc, a block that drifts out of the flow — otherwise vanishes in silence:
+# the tail prints a smaller "all N cases" and still exits 0, which reads exactly like a pass.
+# This constant is the only thing in the file that notices a case went missing.
+EXPECTED_CASES=27
 PASS=0; FAIL=0
 run() {  # run <name> <stdin-json> <expect-exit> <expect-calls> [env=val ...]
   local name="$1" payload="$2" want_exit="$3" want_calls="$4"; shift 4
@@ -128,6 +133,26 @@ else
   printf 'FAIL  %-46s prompt carried no diff text\n' "reviewer prompt"; FAIL=$((FAIL+1))
 fi
 
+# --- a runner shell script is in scope
+#
+# run-agent.sh executes every benchmark run in this repository: it builds the worktree, sets
+# the flags the agent is measured under, and decides what lands in the run record. Until
+# 2026-09-22 no glob selected it — `runner/*.py` covered the statistics while the script that
+# produces the data they summarise was invisible to the critic, which is reviewing the
+# arithmetic and not the measurement.
+#
+# Asserted BY NAME, not by call count. The count is already 1 from the changed .py above, and
+# the hook makes ONE reviewer call carrying every matched file, so a count assertion here
+# passes unchanged with the shell script still unselected — it would test nothing.
+echo 'echo verify' > "$FIXTURE/runner/verify-otlp-endpoint-refusal.sh"
+git -C "$FIXTURE" add -A >/dev/null; git -C "$FIXTURE" commit -qm verifier
+run "a runner shell script is reviewed"  "$PUSH" 0 1
+if grep -q 'runner/verify-otlp-endpoint-refusal.sh' "$CALLS" 2>/dev/null; then
+  printf 'ok    %-46s argv carries the shell script\n' "runner script argv"; PASS=$((PASS+1))
+else
+  printf 'FAIL  %-46s argv was: %s\n' "runner script argv" "$(cat "$CALLS" 2>/dev/null)"; FAIL=$((FAIL+1))
+fi
+
 # --- a migration is in scope; migrations are one-way
 echo 'ALTER TABLE agent_run ADD COLUMN x int;' \
   > "$FIXTURE/observatory-api/src/main/resources/db/migration/V7__x.sql"
@@ -173,6 +198,7 @@ run "a failing reviewer still exits 0"  "$PUSH" 0 1 STUB_EXIT=1 STUB_VERDICT=non
 
 # --- files outside the globs are not worth a model call
 git -C "$FIXTURE" rm -q "$FIXTURE/runner/analyze-experiment.py" \
+   "$FIXTURE/runner/verify-otlp-endpoint-refusal.sh" \
    "$FIXTURE/observatory-api/src/main/resources/db/migration/V7__x.sql"
 echo notes >> "$FIXTURE/README.md"
 mkdir -p "$FIXTURE/observatory-web/src"
@@ -202,6 +228,12 @@ else
 fi
 
 echo
+if [ "$((PASS+FAIL))" -ne "$EXPECTED_CASES" ]; then
+  echo "opencode-review.test: ran $((PASS+FAIL)) cases, expected ${EXPECTED_CASES}." >&2
+  echo "  A case was added or lost without updating EXPECTED_CASES. Fix the count or find the" >&2
+  echo "  missing case; a shrinking suite that still exits 0 is indistinguishable from a pass." >&2
+  exit 1
+fi
 if [ "$FAIL" -eq 0 ]; then
   echo "opencode-review.test: all ${PASS} cases behaved as specified."
   exit 0

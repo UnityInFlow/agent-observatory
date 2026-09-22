@@ -22,6 +22,12 @@
 #   runner/*.py        the statistics that decide a verdict. analyze-experiment.py fails
 #                      closed by design; derive-mde.py sets the bar a later comparison is
 #                      judged against. A quiet change to either moves the bar after the fact.
+#   runner/*.sh        the scripts that PRODUCE those numbers. run-agent.sh builds the
+#                      worktree, sets the flags the agent is measured under and decides what
+#                      is recorded; a wrong line there is not a crash, it is a batch of runs
+#                      that look fine and answer a different question than the one asked.
+#                      Reviewing the statistics while the script feeding them is invisible
+#                      audits the arithmetic and not the measurement.
 #   migration/*.sql    schema changes are one-way against a database holding measurements
 #                      that cannot be re-collected — every run's worktree is already gone.
 #   runner/schemas/    the run-record contract. It spent months describing a payload nothing
@@ -57,6 +63,7 @@ set -uo pipefail
 # quietly — a partial review reported as a review is the failure this whole repo is about.
 REVIEW_GLOBS=(
   'runner/*.py'
+  'runner/*.sh'
   'observatory-api/src/main/resources/db/migration/*.sql'
   'runner/schemas/*.json'
   '.claude/hooks/*.sh'
