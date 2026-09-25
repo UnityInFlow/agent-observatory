@@ -6,7 +6,9 @@
 # `agentsHash` covers the SET of `.claude/agents/*.md`, computed as `skills_hash()` computes
 # the set of `SKILL.md`s: one digest over the sorted (path, content) pairs. The clause author
 # decision 11 item 9 asks for, verbatim, is "a fixture set proving it tells a renamed file from
-# a changed one" — cases D, E and F below are that clause and nothing else.
+# a changed one" — cases D, E and F carry that clause, and they do NOT test the same thing:
+# **D** is the rename, **E** is the edit, and **F** is the pair. They fail independently, and
+# case F's own comment says which of them detects which defect.
 #
 # WHY IT DRIVES THE REAL RUNNER. Every case invokes `run-agent.sh --check-customization`, which
 # computes the hashes on the real code path and exits before any agent is launched. A fixture
@@ -16,7 +18,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # Asserted at the END against what actually ran, never printed at the top from a constant.
-EXPECTED_CASES=9
+EXPECTED_CASES=10
 
 RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 API_PORT="8080"
@@ -62,6 +64,14 @@ ONE="$TMP/one";      agent_file "$ONE/.claude/agents/alpha.md"  alpha  "Body A."
 TWO="$TMP/two";      agent_file "$TWO/.claude/agents/alpha.md"  alpha  "Body A."
                      agent_file "$TWO/.claude/agents/beta.md"   beta   "Body B."
 # RENAMED: identical content, different path.
+#
+# THE FRONTMATTER `name:` DELIBERATELY DOES NOT MATCH THE FILENAME HERE, and it cannot. Case D
+# isolates a RENAME, which means the bytes must be identical to ONE's — so `gamma.md` has to
+# carry `name: alpha`, and `--agent gamma` is passed only so the run has a dispatch target.
+# A reviewer flagged this as an unresolved ordering assumption: if the runner validated `--agent`
+# against the frontmatter `name` before hashing, D would fail with "a rename was invisible"
+# rather than with a validation error. OBSERVED, NOT ASSUMED: it does not — D passes, and the
+# agentsHash it returns differs from ONE's, which is only reachable if the hash was computed.
 REN="$TMP/renamed";  agent_file "$REN/.claude/agents/gamma.md"  alpha  "Body A."
 # CHANGED: identical path, different content.
 CHG="$TMP/changed";  agent_file "$CHG/.claude/agents/alpha.md"  alpha  "Body A, edited."
@@ -174,6 +184,21 @@ if [[ "$H_DEL" == "$H_ONE" && "$H_DEL" == sha256:* ]]; then
   ok "I: REMOVING an agent file returns agentsHash to the one-file value"
 else
   bad "I: expected '$H_ONE' after removing beta.md, got '$H_DEL'"
+fi
+
+# J — the glob RECURSES, and nothing above showed it. `find .claude/agents -type f -name '*.md'`
+#     descends into subdirectories, so an agent in `.claude/agents/sub/` IS part of the set — but
+#     every fixture above creates top-level files only, so a runner that narrowed the glob to the
+#     top level (or widened it, had it been narrow) would have passed all of them. This pins the
+#     actual behaviour rather than the assumed one.
+NEST="$TMP/nested"
+agent_file "$NEST/.claude/agents/alpha.md"       alpha "Body A."
+agent_file "$NEST/.claude/agents/sub/delta.md"   delta "Body D."
+H_NEST="$(agents_hash_of --customization "$NEST" --agent alpha)"
+if [[ "$H_NEST" == sha256:* && "$H_NEST" != "$H_ONE" ]]; then
+  ok "J: an agent file in a SUBDIRECTORY is part of the set ($H_NEST)"
+else
+  bad "J: a nested agent file was invisible — got '$H_NEST' against '$H_ONE'"
 fi
 
 echo
