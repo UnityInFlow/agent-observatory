@@ -16,7 +16,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # Asserted at the END against what actually ran, never printed at the top from a constant.
-EXPECTED_CASES=8
+EXPECTED_CASES=9
 
 RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 API_PORT="8080"
@@ -116,9 +116,24 @@ else
   bad "E: an edit was invisible — got '$H_CHG' against '$H_ONE'"
 fi
 
-# F — THE REGISTERED CLAUSE. D and E must not be the same value. A digest over content alone
-#     would pass D and E separately and fail here, and that is exactly the defect being
-#     excluded: "tells a renamed file from a changed one" (decision 11 item 9).
+# F — THE REGISTERED CLAUSE, stated as a pair: a rename and an edit must not be the same value.
+#
+#     *** DO NOT DELETE CASE D ON THE STRENGTH OF THIS ONE. *** An earlier version of this
+#     comment claimed F was the backstop against a digest computed over CONTENT ALONE. It is
+#     not, and the review caught it. Work it through: with the path left out of the digest, a
+#     rename does not move the hash, so H_REN == H_ONE and **D FAILS**; an edit still moves it,
+#     so E passes; and H_REN != H_CHG remains true, so **F PASSES**. **D is the case that
+#     detects a content-only digest and F is not.** F earns its place by pinning the two
+#     differences apart as a PAIR — a digest that folded path and content together lossily
+#     could move on both and collide — but it is the second line of the guarantee, not the
+#     first. A future editor removing D as redundant would leave the registered clause
+#     ("tells a renamed file from a changed one", decision 11 item 9) silently unenforced.
+#
+#     DEMONSTRATED, not argued, on the ONE and RENAMED fixtures of this file:
+#         content-only digest   one = 7256986d2a4de9aa4a7d0b1012091c2a
+#                               ren = 7256986d2a4de9aa4a7d0b1012091c2a   <- EQUAL, D fails
+#         with the path in it   one = b035a37b0f723a3acdcfeee078d81178
+#                               ren = ea5fba4f3f610e938a6c2da36208c063   <- differ, D passes
 if [[ "$H_REN" != "$H_CHG" && "$H_REN" == sha256:* && "$H_CHG" == sha256:* ]]; then
   ok "F: a rename and an edit produce DIFFERENT hashes — the two are distinguishable"
 else
@@ -143,6 +158,22 @@ if [[ $rc -eq 0 && "$one_file" == sha256:* && "$one_file" != "$H_TWO" ]]; then
   ok "H: agentHash ($one_file) and agentsHash ($H_TWO) are different measurements"
 else
   bad "H: expected two different non-null hashes, got agentHash '$one_file' agentsHash '$H_TWO' (exit $rc)"
+fi
+
+# I — REMOVAL from the set. The header claims agentsHash covers the SET, and C only proves that
+#     ADDING a member moves it. Nothing proved that REMOVING one does, so a digest that folded
+#     new members in without re-deriving from the current file list would have passed every case
+#     above. The value must return to H_ONE exactly: DEL is TWO with beta.md deleted, which is
+#     ONE by construction, so this also re-pins determinism through a different edit path than G.
+DEL="$TMP/deleted-member"
+agent_file "$DEL/.claude/agents/alpha.md" alpha "Body A."
+agent_file "$DEL/.claude/agents/beta.md"  beta  "Body B."
+rm "$DEL/.claude/agents/beta.md"
+H_DEL="$(agents_hash_of --customization "$DEL" --agent alpha)"
+if [[ "$H_DEL" == "$H_ONE" && "$H_DEL" == sha256:* ]]; then
+  ok "I: REMOVING an agent file returns agentsHash to the one-file value"
+else
+  bad "I: expected '$H_ONE' after removing beta.md, got '$H_DEL'"
 fi
 
 echo
