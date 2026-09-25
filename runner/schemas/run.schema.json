@@ -58,7 +58,8 @@
         "skillsHash": { "type": ["string", "null"] },
         "agentHash": { "type": ["string", "null"] },
         "hooksHash": { "type": ["string", "null"] },
-        "mcpHash": { "type": ["string", "null"] }
+        "mcpHash": { "type": ["string", "null"] },
+        "agentsHash": { "type": ["string", "null"] }
       }
     },
 

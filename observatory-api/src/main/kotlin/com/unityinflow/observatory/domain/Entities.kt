@@ -79,6 +79,12 @@ class CustomizationSnapshot(
     @Column(name = "agent_hash")
     var agentHash: String? = null,
 
+    // agentHash (above) is the ONE dispatched agent file. agentsHash is the SET of
+    // .claude/agents/*.md in the worktree — the two differ by one letter and by everything
+    // else. A four-file agent overlay was three files no hash saw until this column existed.
+    @Column(name = "agents_hash")
+    var agentsHash: String? = null,
+
     @Column(name = "hooks_hash")
     var hooksHash: String? = null,
 

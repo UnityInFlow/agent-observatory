@@ -70,6 +70,7 @@ class RunService(
                         agentHash = it.agentHash,
                         hooksHash = it.hooksHash,
                         mcpHash = it.mcpHash,
+                        agentsHash = it.agentsHash,
                     ),
                 ).id
             }
@@ -270,6 +271,7 @@ class RunService(
                         it.agentHash,
                         it.hooksHash,
                         it.mcpHash,
+                        it.agentsHash,
                     )
                 }
                 ?: CustomizationDto(),
