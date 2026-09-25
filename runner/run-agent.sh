@@ -622,11 +622,27 @@ skills_hash() {
         shasum -a 256 "$f" | cut -d' ' -f1
       done <<<"$files") | shasum -a 256 | cut -c1-32)"
 }
+# The agent SURFACE, not the dispatched file. `agentHash` above covers exactly one path,
+# `.claude/agents/<AGENT_NAME>.md`; a multi-agent overlay is three or more files no hash sees,
+# which is why spine stop 17a had to write four hand-checked delivery conditions per run
+# (author decision 11 item 9). Computed exactly as skills_hash is — one digest over the sorted
+# (path, content) pairs — so that a RENAMED agent is a difference and not a collision, and so
+# that the two values are read the same way by anyone who already reads skillsHash.
+agents_hash() {
+  local files
+  files=$(cd "$WORKTREE" && find .claude/agents -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+  [[ -n "$files" ]] || { echo "null"; return; }
+  printf '"sha256:%s"' "$( (cd "$WORKTREE" && while IFS= read -r f; do
+        printf '%s\n' "$f"
+        shasum -a 256 "$f" | cut -d' ' -f1
+      done <<<"$files") | shasum -a 256 | cut -c1-32)"
+}
 CUSTOMIZATION=$(jq -nc \
   --argjson instructions "$(hash_of "$RUNTIME_INSTRUCTIONS")" \
   --argjson skills "$(skills_hash)" \
   --argjson agent "$([[ -n "$AGENT_FILE_REL" ]] && hash_of "$AGENT_FILE_REL" || echo null)" \
-  '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent}')
+  --argjson agents "$(agents_hash)" \
+  '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent, agentsHash: $agents}')
 
 if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
   # Report what the setup commit actually TRACKS, not what was copied. "The file is in the

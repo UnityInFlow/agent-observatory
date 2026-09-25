@@ -42,11 +42,15 @@ data class CustomizationDto(
     val agentHash: String? = null,
     val hooksHash: String? = null,
     val mcpHash: String? = null,
+    // The SET of .claude/agents/*.md, as skillsHash is the set of SKILL.md. NOT agentHash,
+    // which is the single dispatched file. Added last so every positional construction of
+    // this class keeps its meaning.
+    val agentsHash: String? = null,
 ) {
     // Deliberately not named isEmpty()/getX(): Jackson would treat a getter-shaped helper
     // as a real property and serialize it into the API response.
     fun hasNoHashes(): Boolean =
-        listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash).all { it == null }
+        listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash, agentsHash).all { it == null }
 }
 
 /**

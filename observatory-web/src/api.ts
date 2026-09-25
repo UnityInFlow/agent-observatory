@@ -35,6 +35,9 @@ export interface Customization {
   agentHash: string | null;
   hooksHash: string | null;
   mcpHash: string | null;
+  /** The SET of .claude/agents/*.md, as skillsHash is the set of SKILL.md.
+   *  NOT agentHash, which is the single dispatched agent file. */
+  agentsHash: string | null;
 }
 
 export interface Evaluation {

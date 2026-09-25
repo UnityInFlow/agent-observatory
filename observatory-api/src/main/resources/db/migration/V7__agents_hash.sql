@@ -1,0 +1,24 @@
+-- agentHash hashes exactly ONE file: `.claude/agents/<AGENT_NAME>.md`, the agent the run
+-- dispatches. A multi-agent overlay is therefore mostly invisible to the record.
+--
+-- Measured, not supposed. Spine stop 17a (B8a, decomposition depth) installed a four-file
+-- overlay — one orchestrator and three specialists — on 8 treated runs. `agentHash` covered
+-- the orchestrator. The other three files, which are where the treatment's whole content
+-- lives, were covered by nothing: author decision 11 item 9 had to name FOUR hand-written
+-- delivery conditions per run, one of them a `git ls-files` in the kept worktree, precisely
+-- because no hash carried them. Item 9 calls the column below "welcome".
+--
+-- agents_hash is the SET, computed exactly as skills_hash is: one digest over the sorted
+-- (path, content) pairs of every `.claude/agents/*.md` in the worktree. Sorted so the value
+-- does not depend on find order; the path included so a RENAMED agent is a difference rather
+-- than a collision.
+--
+-- NULLABLE, and for V6's reason: every run already on record was taken before anything
+-- measured this. `null` means not measured. Any non-null default would be a claim about runs
+-- where nobody looked, which is V4's mistake and is not repeated here.
+--
+-- NOT A REPLACEMENT FOR agent_hash, and the two differ by one letter. agent_hash answers
+-- "which agent did this run dispatch, and was it the registered file"; agents_hash answers
+-- "what was the whole agent surface installed in this worktree". A step that dispatches one
+-- agent out of four needs both, and stop 17a is the proof.
+ALTER TABLE customization_snapshot ADD COLUMN agents_hash varchar(64);
