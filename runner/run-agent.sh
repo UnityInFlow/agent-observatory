@@ -794,10 +794,50 @@ case "$RUNTIME" in
     #
     # This does not isolate ~/.claude/settings.json; permission rules still leak. That is a
     # separate, narrower hole and it is tracked, not fixed here.
+    # *** THE FIFTH HARNESS MOVE OF TRACK B, and it is a permission, not a capability. ***
+    # `Bash(.ai/knowledge/router.sh:*)` is here because spine stop 20's whole treatment is a
+    # script the agent is asked to run, and in `claude -p` there is no human to approve one.
+    #
+    # MEASURED, NOT REASONED. Stop 20's preflight ran four runs. On BE-003's treated run
+    # fbdebf75 the agent called the router ON ITS OWN INITIATIVE at its first opportunity —
+    #     .ai/knowledge/router.sh "state transition validation error codes"
+    # — and that call is in the run's `permission_denials` array. The treatment's own hooks did
+    # not refuse it: repair-limit.sh recorded NINE allows and ZERO blocks on the same run. What
+    # refused it was the two-entry allowlist below: with `--permission-mode acceptEdits`, edits
+    # are auto-approved and every Bash command that is not mvn is denied. So the batch would
+    # have recorded an empty retrieval log on every treated run and reported its registered
+    # VOID row — "an L3 instruction nobody acted on" — about an agent that acted on it
+    # immediately. A harness refusal read as a null result is this project's house failure mode.
+    #
+    # WHY IT IS HERE AND NOT IN THE OVERLAY, which is where a treatment's own precondition
+    # belongs and was tried first. A project-scope `permissions.allow` entry in the overlay's
+    # .claude/settings.json is IGNORED, and the runtime says why:
+    #     "Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has
+    #      not been trusted. Run Claude Code interactively here once and accept the trust
+    #      dialog, or set projects[...].hasTrustDialogAccepted: true in ~/.claude.json."
+    # Every benchmark worktree is a new temp directory and is untrusted by construction, and
+    # the remedy the runtime offers is a user-scope mutation, which --isolate-user-settings
+    # exists to prevent. So a treatment in this harness CANNOT grant itself a Bash permission.
+    # Three arms, one model call each, in the lab at
+    # evidence/b09/router-permission-probe-20260926T130051Z: settings as shipped -> DENIED;
+    # overlay permissions.allow -> DENIED, entry ignored; this flag -> permission_denials [],
+    # and the router wrote its log.
+    #
+    # UNCONDITIONAL, ON EVERY CLAUDE RUN OF EVERY ARM, for the reason the stream-json comment
+    # below gives about itself: a flag passed to the treatment arm only makes the launch a
+    # between-arm difference and confounds the comparison the flag was added to protect. An
+    # allow rule for a path that does not exist cannot change a control run's behaviour —
+    # there is nothing there to permit.
+    #
+    # WHAT IT COSTS, stated rather than left to be inferred: every claude run from 2026-09-26
+    # onward has a three-entry allowlist where every earlier run had two. Comparisons inside
+    # one stop are unaffected (both arms move together, and stop 20 runs a concurrent control
+    # by design), but a number transferred from a stored run — an MDE, a cost baseline — was
+    # measured under the two-entry list and must say so where it is used.
     CLAUDE_ARGS=(
       --permission-mode acceptEdits
       --strict-mcp-config
-      --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)"
+      --allowedTools "Bash(./mvnw:*)" "Bash(mvn:*)" "Bash(.ai/knowledge/router.sh:*)"
     )
     # --disable-slash-commands unless the experiment's treatment IS a skill. It is the
     # default because it closes the operator's plugin channel; it is skippable because it
@@ -835,6 +875,11 @@ case "$RUNTIME" in
       # No registered metric is read from this log: cost, tool calls and duration all come
       # from telemetry (section 9b). The log is used for the infrastructure-signature check,
       # which still matches, and which section 10 now also reads structurally.
+      # The assembled flag list, in the run's own log. Not a substitute for the record: the
+      # thing that PROVES a permission took effect is an empty `permission_denials` array on a
+      # run that made the call, and that is in the stream-json below. This is provenance, so a
+      # reader of one run can see what the launch was without resolving this file at a sha.
+      echo "  claude args: ${CLAUDE_ARGS[*]}"
       ( cd "$WORKTREE" && claude "${CLAUDE_ARGS[@]}" \
           --output-format stream-json --verbose \
           -p "$(cat "$BENCH_DIR/task.md")" ) \
