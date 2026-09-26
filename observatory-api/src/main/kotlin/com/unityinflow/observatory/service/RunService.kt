@@ -103,7 +103,9 @@ class RunService(
                 permissionRequests = request.behavior.permissionRequests,
                 permissionDenials = request.behavior.permissionDenials,
             ),
-            efficiency = EfficiencyMetrics(
+            // efficiencyOrNull, mirroring behaviorOrNull above: the constructor takes the backing
+            // field and every reader goes through the non-null accessor.
+            efficiencyOrNull = EfficiencyMetrics(
                 durationMs = request.efficiency.durationMs,
                 inputTokens = request.efficiency.inputTokens,
                 outputTokens = request.efficiency.outputTokens,

@@ -260,7 +260,21 @@ class AgentRun(
     var behaviorOrNull: BehaviorMetrics? = BehaviorMetrics(),
 
     @Embedded
-    var efficiency: EfficiencyMetrics = EfficiencyMetrics(),
+    /**
+     * Backing field only — read [efficiency] instead.
+     *
+     * The same footgun [behaviorOrNull] absorbs, found the same way and one release later:
+     * every column in [EfficiencyMetrics] is nullable, and JPA materializes an embeddable whose
+     * columns are all null as a **null embeddable**. Until 2026-09-26 no stored run had ever had
+     * all seven null — every real run has a duration — so `toResponse` dereferenced it directly
+     * and nothing ever failed. The first run POSTed with no efficiency values at all (a fixture
+     * from `runner/verify-knowledge-hash.sh` case L) made `GET /api/runs` answer **500** for
+     * every caller, with `NullPointerException: … getDurationMs() because … getEfficiency() is
+     * null` at `RunService.toResponse`. One malformed row taking out the list endpoint is a
+     * defect in the reader, not in the row.
+     */
+    @Suppress("VariableNaming")
+    var efficiencyOrNull: EfficiencyMetrics? = EfficiencyMetrics(),
 
     @Embedded
     var result: ChangeSummary = ChangeSummary(),
@@ -280,6 +294,16 @@ class AgentRun(
     var behavior: BehaviorMetrics
         get() = behaviorOrNull ?: BehaviorMetrics()
         set(value) { behaviorOrNull = value }
+
+    /**
+     * Efficiency counters, never null as an object — the seven values inside carry the
+     * "not measured" answer individually, exactly as [behavior]'s six do. Assigning null here
+     * means the same thing as assigning seven nulls.
+     */
+    @get:Transient
+    var efficiency: EfficiencyMetrics
+        get() = efficiencyOrNull ?: EfficiencyMetrics()
+        set(value) { efficiencyOrNull = value }
 }
 
 @Entity

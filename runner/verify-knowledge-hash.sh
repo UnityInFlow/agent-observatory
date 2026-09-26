@@ -25,7 +25,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # Asserted at the END against what actually ran, never printed at the top from a constant.
-EXPECTED_CASES=12
+EXPECTED_CASES=13
 
 RUNNER="${RUNNER_UNDER_TEST:-./runner/run-agent.sh}"
 API_PORT="8080"
@@ -228,6 +228,22 @@ if [[ "$code" == "201" || "$code" == "200" ]]; then
 else
   bad "L: the API answered HTTP $code to a record carrying knowledgeHash — a runner ahead of an
         API restart would fail rather than record null"
+fi
+
+# M — THE REGRESSION CASE L CAUSED, and it is here because it actually happened rather than
+#     because it was imagined. Case L's record has NO efficiency values at all. JPA materializes
+#     an embeddable whose columns are all null as a NULL EMBEDDABLE, `RunService.toResponse`
+#     dereferenced `run.efficiency` directly, and the first such row in the table made
+#     `GET /api/runs` answer **500 for every caller** — the list the batch driver, the report and
+#     the web UI all read. Fixed by giving `efficiency` the `behaviorOrNull` treatment this entity
+#     already documents for `behavior`. This case asserts the list endpoint answers 200 AFTER case
+#     L has inserted its row, which is the only ordering in which it proves anything.
+code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$API_URL/api/runs?limit=5")"
+if [[ "$code" == "200" ]]; then
+  ok "M: GET /api/runs answers 200 with case L's efficiency-free record in the table"
+else
+  bad "M: GET /api/runs answered HTTP $code after case L — one malformed row must not take out
+        the list endpoint every reader of this API depends on"
 fi
 
 echo
