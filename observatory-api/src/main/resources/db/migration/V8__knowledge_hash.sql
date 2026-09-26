@@ -1,0 +1,24 @@
+-- The four hashes a run already recorded name an instruction file, the set of SKILL.md, the one
+-- dispatched agent file and the set of agent files. NONE of them covers a knowledge CORPUS, and
+-- a corpus is a directory rather than a path.
+--
+-- Measured, not supposed. Spine stop 20 (B9, knowledge router) installs `.ai/knowledge/` — an
+-- index, a summary, a detail document and a router — as the whole content of its treatment. Its
+-- workbook records the hole as extract fact 5 and calls it "the third time this hole has decided
+-- a design": stop 17a had to write four hand-checked delivery conditions per run because
+-- agentHash covered one file of four (V7's note), and stop 20 would have had to do the same for
+-- a corpus of four. A treatment with no per-run delivery proof is a treatment that cannot be
+-- told apart from its own absence.
+--
+-- knowledge_hash is the SET, computed exactly as skills_hash and agents_hash are: one digest over
+-- the sorted (path, content) pairs of every file under `.ai/knowledge/` in the worktree. Sorted so
+-- the value does not depend on find order; the path included so a RENAMED document is a
+-- difference rather than a collision. runner/verify-knowledge-hash.sh proves both of those
+-- sentences against the real code path instead of asserting them.
+--
+-- NULLABLE, for V6's and V7's reason: every run already on record was taken before anything
+-- measured this, and `null` means not measured. A non-null default would be a claim about runs
+-- where nobody looked — V4's mistake, not repeated here. It is also what a CONTROL arm must read:
+-- stop 20's control installs no corpus, and the experiment asserts `null` from the record rather
+-- than from the flag it did not pass.
+ALTER TABLE customization_snapshot ADD COLUMN knowledge_hash varchar(64);

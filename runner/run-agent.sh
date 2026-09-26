@@ -637,12 +637,35 @@ agents_hash() {
         shasum -a 256 "$f" | cut -d' ' -f1
       done <<<"$files") | shasum -a 256 | cut -c1-32)"
 }
+# The KNOWLEDGE CORPUS, as a set, for the same reason skills and agents are sets: a corpus is a
+# directory, not a path. Spine stop 20 (B9) installs `.ai/knowledge/` — an index, a summary, a
+# detail document and a router — and before this function NOTHING in the record covered any of
+# them. The four fields above are instructionsHash, skillsHash, agentHash and agentsHash, and a
+# corpus is none of those; the workbook's extract fact 5 is the third time in this track that a
+# missing hash decided a design.
+#
+# Computed exactly as skills_hash() and agents_hash() are: one digest over the sorted
+# (path, content) pairs. Sorted so the value does not depend on find order; the path included so
+# a RENAMED document is a difference rather than a collision — the verifier's case set proves
+# both halves of that sentence rather than asserting them.
+#
+# `null` when there is no `.ai/knowledge/` directory, which is what a control arm must read.
+knowledge_hash() {
+  local files
+  files=$(cd "$WORKTREE" && find .ai/knowledge -type f 2>/dev/null | LC_ALL=C sort)
+  [[ -n "$files" ]] || { echo "null"; return; }
+  printf '"sha256:%s"' "$( (cd "$WORKTREE" && while IFS= read -r f; do
+        printf '%s\n' "$f"
+        shasum -a 256 "$f" | cut -d' ' -f1
+      done <<<"$files") | shasum -a 256 | cut -c1-32)"
+}
 CUSTOMIZATION=$(jq -nc \
   --argjson instructions "$(hash_of "$RUNTIME_INSTRUCTIONS")" \
   --argjson skills "$(skills_hash)" \
   --argjson agent "$([[ -n "$AGENT_FILE_REL" ]] && hash_of "$AGENT_FILE_REL" || echo null)" \
   --argjson agents "$(agents_hash)" \
-  '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent, agentsHash: $agents}')
+  --argjson knowledge "$(knowledge_hash)" \
+  '{instructionsHash: $instructions, skillsHash: $skills, agentHash: $agent, agentsHash: $agents, knowledgeHash: $knowledge}')
 
 if [[ "$CHECK_CUSTOMIZATION_ONLY" == true ]]; then
   # Report what the setup commit actually TRACKS, not what was copied. "The file is in the
