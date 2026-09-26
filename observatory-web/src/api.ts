@@ -38,6 +38,9 @@ export interface Customization {
   /** The SET of .claude/agents/*.md, as skillsHash is the set of SKILL.md.
    *  NOT agentHash, which is the single dispatched agent file. */
   agentsHash: string | null;
+  /** The SET of files under .ai/knowledge/ — the corpus a knowledge router reads.
+   *  null on a run that installed no corpus, which is what a control arm reads. */
+  knowledgeHash: string | null;
 }
 
 export interface Evaluation {

@@ -46,11 +46,17 @@ data class CustomizationDto(
     // which is the single dispatched file. Added last so every positional construction of
     // this class keeps its meaning.
     val agentsHash: String? = null,
+    // The SET of files under .ai/knowledge/ — the corpus a knowledge router reads. Spine stop 20
+    // installs one; none of the five fields above covers a corpus, so before this field a
+    // knowledge treatment was delivered with no per-run proof at all. Added last, so every
+    // positional construction of this class keeps its meaning — the same rule agentsHash followed.
+    val knowledgeHash: String? = null,
 ) {
     // Deliberately not named isEmpty()/getX(): Jackson would treat a getter-shaped helper
     // as a real property and serialize it into the API response.
     fun hasNoHashes(): Boolean =
-        listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash, agentsHash).all { it == null }
+        listOf(instructionsHash, skillsHash, agentHash, hooksHash, mcpHash, agentsHash, knowledgeHash)
+            .all { it == null }
 }
 
 /**

@@ -90,6 +90,11 @@ class CustomizationSnapshot(
 
     @Column(name = "mcp_hash")
     var mcpHash: String? = null,
+
+    // The SET of files under .ai/knowledge/. Not an instruction file, not a skill, not an agent:
+    // a corpus is a directory, and the five columns above each name something else.
+    @Column(name = "knowledge_hash")
+    var knowledgeHash: String? = null,
 )
 
 @Embeddable

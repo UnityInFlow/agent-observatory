@@ -71,6 +71,7 @@ class RunService(
                         hooksHash = it.hooksHash,
                         mcpHash = it.mcpHash,
                         agentsHash = it.agentsHash,
+                        knowledgeHash = it.knowledgeHash,
                     ),
                 ).id
             }
@@ -272,6 +273,7 @@ class RunService(
                         it.hooksHash,
                         it.mcpHash,
                         it.agentsHash,
+                        it.knowledgeHash,
                     )
                 }
                 ?: CustomizationDto(),
